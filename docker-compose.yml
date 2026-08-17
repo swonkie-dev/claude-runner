@@ -1,0 +1,79 @@
+# O campo `name` é obrigatório no ZimaOS: sem ele o container aparece como parado
+# na dashboard mesmo estando a correr. Ver o README, secção ZimaOS.
+#
+# Para correr mais do que uma instância (ex.: uma por marca), clona o repositório
+# para uma pasta por instância e define INSTANCE no .env de cada uma. O nome do
+# projeto, do container e dos volumes passam a ser distintos, e não há mistura de
+# credenciais nem de sessões entre elas.
+name: claude-runner-${INSTANCE:-default}
+
+services:
+  claude-runner:
+    build:
+      context: .
+      args:
+        WITH_LIBREOFFICE: "${WITH_LIBREOFFICE:-true}"
+        WITH_WHISPER: "${WITH_WHISPER:-true}"
+        PLAYWRIGHT_BROWSERS: "${PLAYWRIGHT_BROWSERS:-chromium}"
+    image: claude-runner:latest
+    container_name: claude-runner-${INSTANCE:-default}
+    restart: unless-stopped
+    env_file: .env
+
+    # O Chromium rebenta com "Target closed" se /dev/shm for os 64MB por omissão
+    # do Docker. Este é o gotcha número um do Playwright em container.
+    shm_size: 1gb
+
+    # GPU integrada via VAAPI. O grupo tem de ser o dono de /dev/dri/renderD128
+    # no host: getent group render | cut -d: -f3
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "${RENDER_GID:-render}"
+
+    volumes:
+      # Sessões do Claude. Sem isto, --resume deixa de funcionar após um restart.
+      - claude-home:/home/node/.claude
+      # Workspaces, repositórios clonados e histórico de jobs.
+      - claude-work:/work
+      # Caches de pip e npm partilhados entre jobs, para não reinstalar sempre.
+      - claude-cache:/home/node/.cache
+      # Cria o mcp.json ANTES do primeiro up. Se o ficheiro não existir, o Docker
+      # cria uma *pasta* com esse nome e o Claude arranca sem MCPs em silêncio.
+      - ./mcp.json:/home/node/mcp.json:ro
+
+    networks:
+      n8n:
+        aliases:
+          # Endereça sempre por este nome a partir do n8n. Com mais do que uma
+          # instância na mesma rede, o nome do serviço (`claude-runner`) fica
+          # ambíguo e a resolução passa a ser à sorte.
+          - claude-runner-${INSTANCE:-default}
+
+    # Descomenta só se precisares de lhe chegar de fora da rede docker.
+    # Mantém o bind em 127.0.0.1: esta API executa código arbitrário.
+    # ports:
+    #   - "127.0.0.1:${HOST_PORT:-8099}:8080"
+
+    # Um job em fuga não deve conseguir derrubar o orquestrador ao lado.
+    deploy:
+      resources:
+        limits:
+          memory: ${MEMORY_LIMIT:-16g}
+          cpus: "${CPU_LIMIT:-8}"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+volumes:
+  claude-home:
+  claude-work:
+  claude-cache:
+
+networks:
+  n8n:
+    external: true
+    name: ${N8N_NETWORK:-n8n}

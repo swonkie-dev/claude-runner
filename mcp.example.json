@@ -1,0 +1,58 @@
+{
+  "_comentario": [
+    "Copiar para mcp.json (que está no .gitignore, porque algumas URLs levam",
+    "a chave embutida).",
+    "",
+    "Regras que valem a pena saber antes de mexer aqui:",
+    "1. ${VARIAVEL} é expandido a partir do ambiente do container, em url,",
+    "   headers, args e env. Verificado.",
+    "2. Só entram servidores que autentiquem por token, em header, variável de",
+    "   ambiente ou na URL. OAuth interativo não funciona: não há browser.",
+    "   Para esses, expõe as operações num MCP Server Trigger do n8n, que já",
+    "   guarda as credenciais e permite escolher o que fica invocável.",
+    "3. Usa os binários pré-instalados (playwright-mcp, n8n-mcp) em vez de npx,",
+    "   senão cada job paga o download no arranque.",
+    "4. Um MCP que não ligue NÃO faz o Claude falhar sozinho: ele corre sem as",
+    "   ferramentas e devolve um resultado plausível. O runner deteta isso no",
+    "   evento system/init e aborta o job. Ver FAIL_ON_MCP_ERROR."
+  ],
+  "mcpServers": {
+    "playwright": {
+      "command": "playwright-mcp",
+      "args": ["--headless", "--isolated"]
+    },
+
+    "swonkie": {
+      "type": "http",
+      "url": "${SWONKIE_MCP_URL}"
+    },
+
+    "teams": {
+      "type": "http",
+      "url": "${TEAMS_MCP_URL}",
+      "headers": {
+        "Authorization": "${TEAMS_AUTHORIZATION}",
+        "CF-Access-Client-Id": "${CF_ACCESS_CLIENT_ID}",
+        "CF-Access-Client-Secret": "${CF_ACCESS_CLIENT_SECRET}"
+      }
+    },
+
+    "hievents": {
+      "type": "http",
+      "url": "${HIEVENTS_MCP_URL}",
+      "headers": {
+        "Authorization": "${HIEVENTS_AUTHORIZATION}",
+        "CF-Access-Client-Id": "${CF_ACCESS_CLIENT_ID}",
+        "CF-Access-Client-Secret": "${CF_ACCESS_CLIENT_SECRET}"
+      }
+    },
+
+    "posthog": {
+      "type": "http",
+      "url": "${POSTHOG_MCP_URL}",
+      "headers": {
+        "Authorization": "Bearer ${POSTHOG_API_KEY}"
+      }
+    }
+  }
+}

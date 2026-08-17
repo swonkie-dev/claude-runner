@@ -1,0 +1,17 @@
+{
+  "name": "claude-runner",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "API HTTP fina que dispara sessões headless do Claude Code",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

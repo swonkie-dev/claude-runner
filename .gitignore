@@ -1,0 +1,15 @@
+# Credenciais e configuração desta instalação. Nunca versionar.
+.env
+.env.*
+!.env.example
+
+# mcp.json leva URLs com apiKey embutida em alguns servidores.
+mcp.json
+
+node_modules/
+server/node_modules/
+
+# Workspaces e histórico de jobs, se alguém correr isto fora de container.
+work/
+*.log
+.DS_Store
