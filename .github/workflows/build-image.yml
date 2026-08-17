@@ -1,0 +1,63 @@
+name: build-image
+
+# Publica a imagem no GHCR. O repositório é público, portanto os minutos de
+# Actions são gratuitos. O pacote em si tem de ser tornado público UMA VEZ, à
+# mão, nas definições do package: por omissão nasce privado mesmo em repos
+# públicos, e o ZimaOS não consegue puxar imagens privadas de forma fiável.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: build-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # A imagem passa dos 5GB e o runner vem com ~14GB livres. Sem isto o
+      # build morre com "no space left on device" já perto do fim.
+      - name: Libertar espaço em disco
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          sudo docker image prune -af || true
+          df -h /
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+            type=ref,event=tag
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # mode=min de propósito: com mode=max a cache de uma imagem desta
+          # dimensão estoura o limite de 10GB do cache do Actions e passa a ser
+          # despejada a cada corrida, o que a torna inútil.
+          cache-from: type=gha
+          cache-to: type=gha,mode=min

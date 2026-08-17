@@ -2,6 +2,20 @@
 # Configura o git antes de arrancar o servidor. Corre como o utilizador `node`.
 set -e
 
+# Configuração dos MCPs por variável de ambiente, para o deploy poder ser feito
+# inteiramente por um painel, sem ficheiros na máquina anfitriã. Se
+# MCP_CONFIG_JSON estiver definida, escreve-a; senão fica o ficheiro que veio na
+# imagem (só o playwright).
+MCP_CONFIG="${MCP_CONFIG:-/home/node/mcp.json}"
+if [ -n "$MCP_CONFIG_JSON" ]; then
+  printf '%s' "$MCP_CONFIG_JSON" > "$MCP_CONFIG"
+  if ! node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$MCP_CONFIG"; then
+    echo "entrypoint: MCP_CONFIG_JSON não é JSON válido, a abortar." >&2
+    exit 1
+  fi
+  echo "entrypoint: mcp.json escrito a partir de MCP_CONFIG_JSON"
+fi
+
 git config --global init.defaultBranch main
 # Os repositórios são clonados para volumes; sem isto o git recusa-se a operar
 # neles quando o owner não bate certo.

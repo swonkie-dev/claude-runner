@@ -1,0 +1,16 @@
+# Override para desenvolvimento: constrói a imagem localmente em vez de a puxar
+# do registry.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# Em produção não é preciso: o GitHub Actions publica a imagem no GHCR a cada
+# push para main.
+services:
+  claude-runner:
+    build:
+      context: .
+      args:
+        WITH_LIBREOFFICE: "${WITH_LIBREOFFICE:-true}"
+        WITH_WHISPER: "${WITH_WHISPER:-true}"
+        PLAYWRIGHT_BROWSERS: "${PLAYWRIGHT_BROWSERS:-chromium}"
+    image: ghcr.io/swonkie-dev/claude-runner:local

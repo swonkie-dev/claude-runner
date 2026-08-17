@@ -1,0 +1,15 @@
+{
+  "_comentario": [
+    "Configuração mínima que vem dentro da imagem. Só o playwright, que não",
+    "precisa de credenciais e funciona sempre.",
+    "Para acrescentar servidores, define MCP_CONFIG_JSON com o JSON completo:",
+    "o entrypoint escreve-o por cima deste ficheiro no arranque.",
+    "Ver mcp.example.json no repositório para um exemplo com headers."
+  ],
+  "mcpServers": {
+    "playwright": {
+      "command": "playwright-mcp",
+      "args": ["--headless", "--isolated"]
+    }
+  }
+}

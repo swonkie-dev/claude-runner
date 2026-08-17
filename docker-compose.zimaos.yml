@@ -1,0 +1,102 @@
+# Pronto a colar em ZimaOS: App Store -> Install a customized app -> Import.
+#
+# Não precisa de ficheiros na máquina: nem repositório clonado, nem .env, nem
+# mcp.json. Tudo entra por variáveis de ambiente, editáveis depois no painel.
+#
+# ANTES DE COLAR, substitui:
+#   1. Todos os valores COLOCAR_* pelos teus.
+#   2. RENDER_GID pelo output de `getent group render | cut -d: -f3`.
+#   3. O nome da rede, se o teu orquestrador não estiver numa rede chamada n8n.
+#   4. INSTANCE no name/container_name/alias, se correres mais do que um.
+name: claude-runner-swonkie
+
+services:
+  claude-runner:
+    image: ghcr.io/swonkie-dev/claude-runner:latest
+    container_name: claude-runner-swonkie
+    restart: unless-stopped
+    shm_size: 1gb
+
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "109"
+
+    environment:
+      # --- autenticação ---
+      CLAUDE_CODE_OAUTH_TOKEN: COLOCAR_TOKEN_SUBSCRICAO
+      RUNNER_TOKEN: COLOCAR_OPENSSL_RAND_HEX_32
+
+      # --- fila ---
+      MAX_CONCURRENCY: "2"
+      DEFAULT_MAX_BUDGET_USD: "0"
+      DEFAULT_TIMEOUT_MS: "3600000"
+      RESCHEDULE_ON_RATE_LIMIT: "true"
+      MAX_RESCHEDULES: "3"
+      FAIL_ON_MCP_ERROR: "true"
+
+      # --- MCPs ---
+      # O JSON completo numa variável. O entrypoint escreve-o no arranque e
+      # valida-o; se não for JSON válido, o container não sobe.
+      #
+      # ATENÇÃO ao $$: é escape do Compose, que produz um $ literal. Sem ele o
+      # Compose substituía estas variáveis por strings vazias ANTES de o
+      # container arrancar, todos os MCPs falhavam e todos os jobs abortavam.
+      # A expansão que interessa é a do Claude Code, já dentro do container,
+      # a partir das variáveis definidas mais abaixo.
+      MCP_CONFIG_JSON: >-
+        {"mcpServers":{
+        "playwright":{"command":"playwright-mcp","args":["--headless","--isolated"]},
+        "swonkie":{"type":"http","url":"$${SWONKIE_MCP_URL}"},
+        "teams":{"type":"http","url":"$${TEAMS_MCP_URL}","headers":{"Authorization":"$${TEAMS_AUTHORIZATION}","CF-Access-Client-Id":"$${CF_ACCESS_CLIENT_ID}","CF-Access-Client-Secret":"$${CF_ACCESS_CLIENT_SECRET}"}},
+        "hievents":{"type":"http","url":"$${HIEVENTS_MCP_URL}","headers":{"Authorization":"$${HIEVENTS_AUTHORIZATION}","CF-Access-Client-Id":"$${CF_ACCESS_CLIENT_ID}","CF-Access-Client-Secret":"$${CF_ACCESS_CLIENT_SECRET}"}},
+        "posthog":{"type":"http","url":"https://mcp.posthog.com/mcp","headers":{"Authorization":"Bearer $${POSTHOG_API_KEY}"}}
+        }}
+
+      SWONKIE_MCP_URL: COLOCAR_URL_MCP_SWONKIE
+      TEAMS_MCP_URL: COLOCAR_URL_MCP_TEAMS
+      TEAMS_AUTHORIZATION: COLOCAR_AUTHORIZATION_TEAMS
+      HIEVENTS_MCP_URL: COLOCAR_URL_MCP_HIEVENTS
+      HIEVENTS_AUTHORIZATION: COLOCAR_AUTHORIZATION_HIEVENTS
+      CF_ACCESS_CLIENT_ID: COLOCAR_CF_ACCESS_CLIENT_ID
+      CF_ACCESS_CLIENT_SECRET: COLOCAR_CF_ACCESS_CLIENT_SECRET
+      POSTHOG_API_KEY: COLOCAR_CHAVE_PESSOAL_POSTHOG
+
+      # --- git ---
+      GH_TOKEN: COLOCAR_PAT_FINE_GRAINED
+      GIT_AUTHOR_NAME: Claude Runner (Swonkie)
+      GIT_AUTHOR_EMAIL: dev@swonkie.com
+      GIT_COMMITTER_NAME: Claude Runner (Swonkie)
+      GIT_COMMITTER_EMAIL: dev@swonkie.com
+
+    volumes:
+      - claude-home:/home/node/.claude
+      - claude-work:/work
+      - claude-cache:/home/node/.cache
+
+    networks:
+      n8n:
+        aliases:
+          - claude-runner-swonkie
+
+    deploy:
+      resources:
+        limits:
+          memory: 10g
+          cpus: "5"
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+volumes:
+  claude-home:
+  claude-work:
+  claude-cache:
+
+networks:
+  n8n:
+    external: true
+    name: n8n

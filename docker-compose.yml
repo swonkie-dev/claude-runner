@@ -1,24 +1,23 @@
-# O campo `name` é obrigatório no ZimaOS: sem ele o container aparece como parado
-# na dashboard mesmo estando a correr. Ver o README, secção ZimaOS.
+# Deploy por registry: puxa a imagem publicada pelo GitHub Actions, não constrói
+# nada localmente. Para desenvolvimento com build local, ver docker-compose.build.yml.
 #
-# Para correr mais do que uma instância (ex.: uma por marca), clona o repositório
-# para uma pasta por instância e define INSTANCE no .env de cada uma. O nome do
-# projeto, do container e dos volumes passam a ser distintos, e não há mistura de
-# credenciais nem de sessões entre elas.
+# O campo `name` é obrigatório no ZimaOS: sem ele o container aparece como parado
+# na dashboard mesmo estando a correr.
+#
+# Para correr mais do que uma instância (ex.: uma por marca), usa uma pasta e um
+# .env por instância, com INSTANCE diferente. O nome do projeto, do container,
+# do alias de rede e dos volumes passam a ser distintos.
 name: claude-runner-${INSTANCE:-default}
 
 services:
   claude-runner:
-    build:
-      context: .
-      args:
-        WITH_LIBREOFFICE: "${WITH_LIBREOFFICE:-true}"
-        WITH_WHISPER: "${WITH_WHISPER:-true}"
-        PLAYWRIGHT_BROWSERS: "${PLAYWRIGHT_BROWSERS:-chromium}"
-    image: claude-runner:latest
+    image: ghcr.io/swonkie-dev/claude-runner:${IMAGE_TAG:-latest}
     container_name: claude-runner-${INSTANCE:-default}
     restart: unless-stopped
-    env_file: .env
+
+    env_file:
+      - path: .env
+        required: false
 
     # O Chromium rebenta com "Target closed" se /dev/shm for os 64MB por omissão
     # do Docker. Este é o gotcha número um do Playwright em container.
@@ -38,16 +37,13 @@ services:
       - claude-work:/work
       # Caches de pip e npm partilhados entre jobs, para não reinstalar sempre.
       - claude-cache:/home/node/.cache
-      # Cria o mcp.json ANTES do primeiro up. Se o ficheiro não existir, o Docker
-      # cria uma *pasta* com esse nome e o Claude arranca sem MCPs em silêncio.
-      - ./mcp.json:/home/node/mcp.json:ro
 
     networks:
       n8n:
         aliases:
-          # Endereça sempre por este nome a partir do n8n. Com mais do que uma
-          # instância na mesma rede, o nome do serviço (`claude-runner`) fica
-          # ambíguo e a resolução passa a ser à sorte.
+          # Endereça sempre por este nome a partir do orquestrador. Com mais do
+          # que uma instância na mesma rede, o nome do serviço fica ambíguo e a
+          # resolução passa a ser à sorte.
           - claude-runner-${INSTANCE:-default}
 
     # Descomenta só se precisares de lhe chegar de fora da rede docker.
@@ -59,8 +55,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${MEMORY_LIMIT:-16g}
-          cpus: "${CPU_LIMIT:-8}"
+          memory: ${MEMORY_LIMIT:-10g}
+          cpus: "${CPU_LIMIT:-5}"
 
     logging:
       driver: json-file

@@ -19,16 +19,28 @@ instalação entra em runtime pelo `.env`, que está no `.gitignore`.
 
 ## Arranque
 
-```bash
-cp .env.example .env && $EDITOR .env
-cp mcp.example.json mcp.json
+A imagem é publicada no GHCR pelo GitHub Actions a cada push para `main`, em
+`ghcr.io/swonkie-dev/claude-runner:latest`. Não é preciso construir nada.
 
+```bash
 # valores que tens de descobrir na tua máquina:
 docker network ls                    # nome da rede onde vive o orquestrador
 getent group render | cut -d: -f3    # GID para o RENDER_GID (GPU)
 
-docker compose up -d --build         # ~15 min à primeira, imagem ~5GB
+cp .env.example .env && $EDITOR .env
+docker compose up -d
 docker compose logs -f
+```
+
+Sem ficheiros na máquina, por painel gráfico: usa o
+[`docker-compose.zimaos.yml`](docker-compose.zimaos.yml), que é autónomo. Não
+precisa de repositório clonado, nem de `.env`, nem de `mcp.json`: tudo entra por
+variáveis de ambiente.
+
+Para desenvolver com build local:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
 Autenticação: define `CLAUDE_CODE_OAUTH_TOKEN` (subscrição, gerado com
@@ -204,32 +216,27 @@ melhor: é atual, está isolado, e os ~500MB são irrelevantes num disco decente
 
 ## ZimaOS
 
-**Constrói na própria máquina, não por registry.** O ZimaOS tem um [problema
-conhecido com registries privados](https://community.zimaspace.com/t/installing-a-customized-app-from-private-registry/6218):
-a instalação pelo dashboard dá erro de autorização. Se o `/var/lib/docker`
-estiver montado num disco com espaço (confirma com `df -h /var/lib/docker`),
-construir localmente evita o problema todo.
+**Instala pelo painel, com a imagem pública do GHCR.** App Store → *Install a
+customized app* → *Import*, e cola o
+[`docker-compose.zimaos.yml`](docker-compose.zimaos.yml). Não precisa de SSH,
+nem de repositório clonado, nem de ficheiros na máquina.
 
-**Arranca por SSH, não pelo dashboard.** É a recomendação oficial da IceWhale
-para esse mesmo problema. O container aparece na dashboard na mesma e sobrevive
-a reboots. Duas condições:
+Isto contorna o [problema conhecido do ZimaOS com registries
+privados](https://community.zimaspace.com/t/installing-a-customized-app-from-private-registry/6218),
+onde a instalação pelo dashboard dá erro de autorização: sendo a imagem
+**pública**, não há autenticação nenhuma envolvida. A imagem não contém
+segredos, todas as credenciais entram em runtime.
+
+Duas condições para a dashboard mostrar a app corretamente:
 
 - o compose tem de ter o campo `name` no topo (já tem), senão aparece como
   parado mesmo a correr;
 - se ainda assim aparecer mal, abre as definições da app na UI e dá-lhe título.
 
-Sincronizar e arrancar:
-
-```bash
-rsync -av --exclude .env --exclude 'server/node_modules' \
-  ./ root@<host>:/DATA/AppData/claude-runner/
-
-ssh root@<host>
-cd /DATA/AppData/claude-runner
-cp .env.example .env && vi .env
-cp mcp.example.json mcp.json
-docker compose up -d --build
-```
+**O pacote no GHCR nasce privado, mesmo num repositório público.** Depois da
+primeira corrida do workflow, vai a *Packages* → `claude-runner` → *Package
+settings* → *Change visibility* → **Public**. Uma vez só. Sem isso o ZimaOS não
+consegue puxar a imagem.
 
 **Não uses ZVM.** O [passthrough de GPU não é suportado nas VMs do
 ZimaOS](https://github.com/IceWhaleTech/ZimaOS/issues/167), o que deixa o ffmpeg
@@ -276,9 +283,22 @@ Playwright rebenta com `Target closed` em páginas pesadas.
 
 ## MCPs
 
-O `mcp.json` é montado em `/home/node/mcp.json` e passado a cada job com
+O `mcp.json` vive em `/home/node/mcp.json` e é passado a cada job com
 `--mcp-config` e `--strict-mcp-config`, o que ignora qualquer configuração de
 MCP herdada do home. É a única fonte de verdade.
+
+**Duas formas de o definir.** Montar um ficheiro em `/home/node/mcp.json`, ou
+definir **`MCP_CONFIG_JSON`** com o JSON completo: o entrypoint escreve-o no
+arranque e valida-o, e o container não sobe se for JSON inválido. A segunda
+permite fazer o deploy inteiro por painel, sem ficheiros na máquina anfitriã.
+Sem nenhuma das duas, fica a configuração mínima que vem na imagem, só com o
+playwright.
+
+> ⚠️ **Ao pôr `MCP_CONFIG_JSON` num ficheiro compose, escapa os `$` como `$$`.**
+> O Compose interpola `${VAR}` no YAML *antes* de o container arrancar, e sem o
+> escape todas as variáveis chegam vazias, todos os MCPs falham e todos os jobs
+> abortam. `$${SWONKIE_MCP_URL}` no YAML chega ao container como
+> `${SWONKIE_MCP_URL}`, que é o que o Claude Code expande. Verificado.
 
 **`${VARIAVEL}` é expandido** a partir do ambiente do container, tanto em `url`
 como em `args` e `env`. Verificado empiricamente. Portanto os segredos ficam no
