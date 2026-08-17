@@ -1,26 +1,51 @@
-# Pronto a colar em ZimaOS: App Store -> Install a customized app -> Import.
+# Pronto a colar em ZimaOS: App Store -> Install a customized app -> Import ->
+# Docker Compose.
+#
+# Escrito no dialeto do ZimaOS/CasaOS, não em compose genérico: serviço chamado
+# `main_app`, bloco `x-casaos`, memória em bytes e `cpu_shares` em vez de `cpus`.
+# Assim a importação não mastiga os campos.
 #
 # Não precisa de ficheiros na máquina: nem repositório clonado, nem .env, nem
 # mcp.json. Tudo entra por variáveis de ambiente, editáveis depois no painel.
 #
-# ANTES DE COLAR, substitui:
-#   1. Todos os valores COLOCAR_* pelos teus.
-#   2. RENDER_GID pelo output de `getent group render | cut -d: -f3`.
-#   3. O nome da rede, se o teu orquestrador não estiver numa rede chamada n8n.
-#   4. INSTANCE no name/container_name/alias, se correres mais do que um.
+# ANTES DE COLAR, substitui todos os valores COLOCAR_*. Confirma também:
+#   - a rede: tem de ser aquela onde vive o teu n8n (`docker network ls`)
+#   - /dev/dri: só se a máquina tiver GPU integrada
 name: claude-runner-swonkie
 
 services:
-  claude-runner:
+  main_app:
     image: ghcr.io/swonkie-dev/claude-runner:latest
     container_name: claude-runner-swonkie
     restart: unless-stopped
-    shm_size: 1gb
+    cpu_shares: 50
 
+    # O Chromium rebenta com "Target closed" se /dev/shm ficar nos 64MB por
+    # omissão do Docker. Confirma depois da importação (ver README): se o painel
+    # tiver descartado este campo, tens de o repor.
+    shm_size: 1073741824
+
+    deploy:
+      resources:
+        limits:
+          # 10 GiB em bytes. O ZimaOS exporta este campo como inteiro sem aspas,
+          # mas o `docker compose config` exige string, por isso vai entre aspas:
+          # é aceite pelos dois. Se a importação se queixar, tira as aspas.
+          memory: "10737418240"
+
+    # Aceleração por hardware (VAAPI). Não é preciso group_add: o renderD128
+    # costuma ficar com permissões crw-rw-rw-, acessível a qualquer utilizador.
+    # Confirma com `ls -l /dev/dri` antes de assumir.
     devices:
       - /dev/dri:/dev/dri
-    group_add:
-      - "109"
+
+    # Só para poderes testar com curl a partir do host. O n8n NÃO precisa disto:
+    # fala com o container pelo nome, dentro da rede. Se publicares, a API fica
+    # exposta na LAN e a única proteção é o RUNNER_TOKEN.
+    ports:
+      - target: 8080
+        published: "8099"
+        protocol: tcp
 
     environment:
       # --- autenticação ---
@@ -28,6 +53,7 @@ services:
       RUNNER_TOKEN: COLOCAR_OPENSSL_RAND_HEX_32
 
       # --- fila ---
+      INSTANCE: swonkie
       MAX_CONCURRENCY: "2"
       DEFAULT_MAX_BUDGET_USD: "0"
       DEFAULT_TIMEOUT_MS: "3600000"
@@ -39,11 +65,9 @@ services:
       # O JSON completo numa variável. O entrypoint escreve-o no arranque e
       # valida-o; se não for JSON válido, o container não sobe.
       #
-      # ATENÇÃO ao $$: é escape do Compose, que produz um $ literal. Sem ele o
-      # Compose substituía estas variáveis por strings vazias ANTES de o
-      # container arrancar, todos os MCPs falhavam e todos os jobs abortavam.
-      # A expansão que interessa é a do Claude Code, já dentro do container,
-      # a partir das variáveis definidas mais abaixo.
+      # ATENÇÃO ao $$: é escape do Compose, que produz um $ literal. Sem ele as
+      # variáveis eram substituídas por vazio ANTES do arranque, todos os MCPs
+      # falhavam e todos os jobs abortavam. Verificado em container.
       MCP_CONFIG_JSON: >-
         {"mcpServers":{
         "playwright":{"command":"playwright-mcp","args":["--headless","--isolated"]},
@@ -69,27 +93,23 @@ services:
       GIT_COMMITTER_NAME: Claude Runner (Swonkie)
       GIT_COMMITTER_EMAIL: dev@swonkie.com
 
+    # Volumes com nome, de propósito, e não bind mounts para /DATA/AppData: o
+    # container corre como o utilizador `node` (uid 1000), e uma pasta criada
+    # pelo Docker num bind mount fica com dono root, o que dá permission denied
+    # a escrever. Um volume com nome herda as permissões da imagem.
     volumes:
       - claude-home:/home/node/.claude
       - claude-work:/work
       - claude-cache:/home/node/.cache
 
     networks:
-      n8n:
-        aliases:
-          - claude-runner-swonkie
+      - n8n
 
-    deploy:
-      resources:
-        limits:
-          memory: 10g
-          cpus: "5"
+    cap_add: []
+    privileged: false
 
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "5"
+    labels:
+      icon: https://icon.casaos.io/main/all/docker.png
 
 volumes:
   claude-home:
@@ -98,5 +118,17 @@ volumes:
 
 networks:
   n8n:
-    external: true
     name: n8n
+
+x-casaos:
+  author: self
+  category: self
+  hostname: ""
+  icon: https://icon.casaos.io/main/all/docker.png
+  index: /
+  is_uncontrolled: false
+  port_map: "8099"
+  scheme: http
+  store_app_id: claude-runner-swonkie
+  title:
+    custom: Claude Runner (Swonkie)
