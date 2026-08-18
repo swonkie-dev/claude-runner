@@ -83,8 +83,10 @@ Tudo autenticado com `Authorization: Bearer $RUNNER_TOKEN`, exceto `/healthz`.
   "max_budget_usd": 5,               // travão de custo (só com API key)
   "timeout_ms": 3600000,
 
+  "mcp": ["swonkie", "playwright"],  // servidores MCP para ESTE job. Omitir = todos
   "tools": ["Bash", "Read", "Edit", "Write"],  // omitir = todas as built-in
-  "allowed_tools": [], "disallowed_tools": [],
+  "disallowed_tools": ["mcp__hievents__hievents_refund_order"],
+  "allowed_tools": [],               // NÃO restringe, ver aviso abaixo
   "add_dirs": ["/work/workspaces/outro"],
   "append_system_prompt": "…",
   "json_schema": { "type": "object", "properties": {} },
@@ -118,6 +120,41 @@ O callback recebe:
   "meta": { "task_id": "DEV-1234" }
 }
 ```
+
+## Privilégio mínimo por job
+
+O pedido declara o que aquele trabalho pode usar. É melhor do que restringir o
+servidor MCP partilhado, porque não afeta mais ninguém e fica explícito no
+workflow que dispara.
+
+**`mcp`: a fronteira que interessa.** Lista de servidores para este job. O
+runner escreve um `mcp.json` só com esses e aponta-lhe o `--mcp-config`. Um
+servidor que não esteja na lista **nem sequer é ligado**, portanto o agente não
+lá chega, aconteça o que acontecer no prompt. Um nome errado devolve `400` com a
+lista dos disponíveis, em vez de dar um job silenciosamente sem ferramentas.
+
+```jsonc
+{ "prompt": "…", "mcp": ["swonkie"] }   // só a Swonkie
+{ "prompt": "…", "mcp": [] }            // nenhum MCP
+{ "prompt": "…" }                       // todos os configurados
+```
+
+**`disallowed_tools`: blocklist de ferramentas.** Funciona mesmo em
+`bypassPermissions` (verificado: com `--disallowedTools Bash`, o Bash desaparece
+da lista de ferramentas da sessão). Aceita nomes de built-ins (`Bash`, `Write`) e
+de MCP (`mcp__servidor__ferramenta`, ou `mcp__servidor` para o servidor todo).
+
+> ⚠️ **`allowed_tools` NÃO restringe nada aqui.** É uma lista de *permissões*, e
+> em `bypassPermissions` está tudo aprovado à partida: verificado, com
+> `--allowedTools Read,Grep` todas as outras ferramentas continuam disponíveis.
+> Não o uses como barreira de segurança. Para limitar, usa `mcp` e
+> `disallowed_tools`.
+
+Ordem de preferência, da barreira mais forte para a mais fraca:
+
+1. **`mcp`** — o servidor não é ligado. É uma fronteira real.
+2. **`disallowed_tools`** — a ferramenta não é oferecida ao modelo.
+3. **Instruções no prompt** — uma sugestão forte, não um cadeado.
 
 ## Limite de utilização e reagendamento
 

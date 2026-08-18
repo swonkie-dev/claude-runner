@@ -16,6 +16,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import readline from 'node:readline'
+import require_fs from 'node:fs'
 
 const PORT = Number(process.env.PORT || 8080)
 const WORK_DIR = process.env.WORK_DIR || '/work'
@@ -55,6 +56,13 @@ let shuttingDown = false
 const log = (...a) => console.log(new Date().toISOString(), ...a)
 
 // ---------------------------------------------------------------- helpers ----
+
+/** Servidores MCP disponíveis nesta instalação, lidos da config base. */
+function availableMcpServers() {
+  try {
+    return Object.keys(JSON.parse(require_fs.readFileSync(MCP_CONFIG, 'utf8')).mcpServers || {})
+  } catch { return [] }
+}
 
 /** Impede que um nome de workspace escape de WORKSPACES_DIR. */
 function safeSlug(input) {
@@ -165,8 +173,8 @@ function buildArgs(job) {
   if (job.effort) args.push('--effort', job.effort)
   // Travão de custo real. Não existe --max-turns no CLI.
   if (job.max_budget_usd) args.push('--max-budget-usd', String(job.max_budget_usd))
-  if (existsSync(MCP_CONFIG)) {
-    args.push('--mcp-config', MCP_CONFIG)
+  if (job.mcp_config_path && existsSync(job.mcp_config_path)) {
+    args.push('--mcp-config', job.mcp_config_path)
     // Ignora configurações de MCP herdadas do home do utilizador: o que corre é
     // exatamente o que está no ficheiro montado.
     args.push('--strict-mcp-config')
@@ -182,10 +190,30 @@ function buildArgs(job) {
   return args
 }
 
+/**
+ * Escreve a config de MCPs deste job, com apenas os servidores pedidos.
+ * É a fronteira que interessa: um servidor que não está aqui nem sequer é
+ * ligado, portanto o agente não tem como lá chegar, aconteça o que acontecer
+ * no prompt. Sem `mcp` no pedido, herda a config completa da instalação.
+ */
+async function writeJobMcpConfig(job) {
+  if (!Array.isArray(job.mcp)) return MCP_CONFIG
+  const base = JSON.parse(await fs.readFile(MCP_CONFIG, 'utf8'))
+  const escolhidos = {}
+  for (const nome of job.mcp) {
+    if (base.mcpServers?.[nome]) escolhidos[nome] = base.mcpServers[nome]
+  }
+  const destino = path.join(JOBS_DIR, job.id, 'mcp.json')
+  await fs.mkdir(path.dirname(destino), { recursive: true })
+  await fs.writeFile(destino, JSON.stringify({ mcpServers: escolhidos }, null, 2))
+  return destino
+}
+
 async function runJob(job) {
   job.status = 'running'
   job.started_at = new Date().toISOString()
   await fs.mkdir(job.workspace, { recursive: true })
+  job.mcp_config_path = await writeJobMcpConfig(job)
   await persist(job)
 
   const logPath = path.join(JOBS_DIR, job.id, 'log.jsonl')
@@ -400,6 +428,19 @@ app.post('/jobs', async (req, res) => {
   }
   if (shuttingDown) return res.status(503).json({ error: 'a desligar' })
 
+  // Falha já se pedirem um MCP que não existe. Um nome mal escrito daria um job
+  // silenciosamente sem essas ferramentas, e um resultado plausível mas oco.
+  if (Array.isArray(b.mcp)) {
+    const disponiveis = availableMcpServers()
+    const desconhecidos = b.mcp.filter(n => !disponiveis.includes(String(n)))
+    if (desconhecidos.length) {
+      return res.status(400).json({
+        error: `MCP desconhecido: ${desconhecidos.join(', ')}`,
+        disponiveis,
+      })
+    }
+  }
+
   const id = randomUUID()
   let workspace
   try {
@@ -424,6 +465,8 @@ app.post('/jobs', async (req, res) => {
     effort: b.effort || DEFAULT_EFFORT || null,
     max_budget_usd: Number(b.max_budget_usd) || DEFAULT_MAX_BUDGET_USD || null,
     tools: b.tools || null,
+    // Allowlist de servidores MCP para este job. Omitir herda todos.
+    mcp: Array.isArray(b.mcp) ? b.mcp.map(String) : null,
     allowed_tools: b.allowed_tools || null,
     disallowed_tools: b.disallowed_tools || null,
     append_system_prompt: b.append_system_prompt || null,
