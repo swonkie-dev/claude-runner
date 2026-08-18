@@ -152,37 +152,28 @@ O padrão que funciona sem timeouts:
 Se preferires polling, troca o Wait por um loop com `GET /jobs/:id` e um Wait de
 30s, mas o callback é mais limpo e não gasta execuções.
 
-> ⚠️ **Não confies no `$execution.resumeUrl` tal como vem.** É a causa número um
-> de o workflow ficar preso no Wait com o job a aparecer `done` nos logs. O URL é
-> gerado pelo n8n e pode não ser alcançável a partir do container, por três
-> motivos diferentes:
+> ⚠️ **Não reescrevas o host do `$execution.resumeUrl`.** O n8n **assina** o URL
+> de retoma (`?signature=...`) e a assinatura cobre o URL original. Trocar o host
+> invalida-a e o n8n responde **404**, com o job a aparecer `done` nos logs e o
+> workflow preso no Wait para sempre. Sem a assinatura responde **401**, o que
+> ajuda a distinguir os casos.
 >
-> - **`WEBHOOK_URL` não definido** no n8n: o URL sai como
->   `http://localhost:5678/...` e o runner tenta ligar-se a si próprio;
-> - **proxy com autenticação à frente** (Cloudflare Access, Authelia, VPN): o
->   pedido sai para a internet e leva 403;
-> - **DNS ou NAT loopback** a não resolver de dentro da rede docker.
+> Se o domínio público não for alcançável de dentro da rede docker (hairpin NAT,
+> DNS interno, proxy com autenticação), a solução **não** é mexer no URL: é
+> mapear o nome para o IP interno no container do runner, mantendo o URL
+> byte a byte igual ao que foi assinado.
 >
-> Reescreve o host para o nome interno do container e o problema desaparece nos
-> três casos, porque deixas de depender do que o n8n gera. Ambos partilham a
-> rede docker, e por dentro não há proxy nenhum pelo meio:
->
-> ```
-> {{ $execution.resumeUrl.replace(/^https?:\/\/[^/]+/, 'http://n8n:5678') }}
+> ```yaml
+> extra_hosts:
+>   - "n8n.exemplo.com:172.18.0.5"   # IP do container do orquestrador
 > ```
 >
-> Para diagnosticar: `GET /jobs/:id` devolve `callback_status` e
-> `callback_error`, que dizem exatamente o que aconteceu ao POST de volta.
-
-> ⚠️ **Um `callback_status: 404` com o URL correto quer dizer outra coisa: a
-> execução não está gravada.** O nó Wait só consegue retomar se a execução
-> existir na base de dados, porque vai buscá-la quando o webhook chega. Execuções
-> **manuais não são persistidas por omissão**, portanto ao testar com um trigger
-> manual o callback leva sempre 404 e o workflow fica preso, mesmo estando tudo
-> o resto bem.
+> Diagnóstico, sem precisar de token:
 >
-> Liga `saveManualExecutions: true` nas definições do workflow. Em produção, com
-> um trigger a sério (cron, webhook), o problema não existe.
+> ```bash
+> docker exec <runner> sh -c 'cat /work/jobs/<job_id>/job.json' \
+>   | jq '{callback_url, callback_status, callback_error}'
+> ```
 
 **Conversas com continuidade:** guarda o `session_id` que vem no callback e
 envia-o no job seguinte. Combina com `workspace` fixo para os ficheiros também
