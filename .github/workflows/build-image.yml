@@ -3,7 +3,12 @@ name: build-image
 # Publica a imagem no GHCR. O repositório é público, portanto os minutos de
 # Actions são gratuitos. O pacote em si tem de ser tornado público UMA VEZ, à
 # mão, nas definições do package: por omissão nasce privado mesmo em repos
-# públicos, e o ZimaOS não consegue puxar imagens privadas de forma fiável.
+# públicos, e o ZimaOS não consegue puxar imagens privadas.
+#
+# Deliberadamente SEM actions de terceiros: só `actions/checkout`, que é da
+# própria GitHub. Organizações com a política de Actions restrita a "enterprise
+# and select actions" bloqueiam `docker/build-push-action` e companhia, e a
+# falha aparece logo no passo "Set up job", antes de qualquer output útil.
 on:
   push:
     branches: [main]
@@ -24,40 +29,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # A imagem passa dos 5GB e o runner vem com ~14GB livres. Sem isto o
+      # A imagem passa dos 5GB e o runner vem com pouco espaço livre. Sem isto o
       # build morre com "no space left on device" já perto do fim.
       - name: Libertar espaço em disco
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
-          sudo docker image prune -af || true
+                      /usr/local/share/boost "${AGENT_TOOLSDIRECTORY:-}" || true
+          docker image prune -af || true
           df -h /
 
-      - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha,format=short
-            type=ref,event=tag
-
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          # mode=min de propósito: com mode=max a cache de uma imagem desta
-          # dimensão estoura o limite de 10GB do cache do Actions e passa a ser
-          # despejada a cada corrida, o que a torna inútil.
-          cache-from: type=gha
-          cache-to: type=gha,mode=min
+      - name: Build e push
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          SHA="${GITHUB_SHA::7}"
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          docker build -t "$IMAGE:latest" -t "$IMAGE:$SHA" .
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:$SHA"
+          echo "publicado: $IMAGE:latest e $IMAGE:$SHA"
