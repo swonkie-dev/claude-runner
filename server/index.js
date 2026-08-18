@@ -47,6 +47,11 @@ const lista = v => (v === undefined ? null : v.split(',').map(x => x.trim()).fil
 const DEFAULT_MCP = lista(process.env.DEFAULT_MCP)
 const DEFAULT_TOOLS = lista(process.env.DEFAULT_TOOLS)
 const DEFAULT_DISALLOWED_TOOLS = lista(process.env.DEFAULT_DISALLOWED_TOOLS)
+// Organização assumida quando o `repos` do pedido traz só o nome curto.
+const GITHUB_ORG = process.env.GITHUB_ORG || ''
+// Clone raso por omissão: o histórico completo raramente serve para nada aqui e
+// custa minutos em repositórios grandes. 0 = clone completo.
+const GIT_CLONE_DEPTH = Number(process.env.GIT_CLONE_DEPTH ?? 50)
 const RESCHEDULE_ON_RATE_LIMIT = process.env.RESCHEDULE_ON_RATE_LIMIT !== 'false'
 const MAX_RESCHEDULES = Number(process.env.MAX_RESCHEDULES || 3)
 const SWEEP_INTERVAL_MS = 30_000
@@ -218,10 +223,57 @@ async function writeJobMcpConfig(job) {
   return destino
 }
 
+/** Corre um comando e devolve {code, out}. Usado para o git, antes do agente. */
+function run(cmd, args, cwd) {
+  return new Promise(resolve => {
+    const c = spawn(cmd, args, { cwd, env: process.env })
+    let out = ''
+    c.stdout.on('data', d => { out += d })
+    c.stderr.on('data', d => { out += d })
+    c.on('error', err => resolve({ code: -1, out: out + String(err.message) }))
+    c.on('close', code => resolve({ code, out: out.slice(-2000) }))
+  })
+}
+
+/**
+ * Garante que os repositórios pedidos estão no workspace antes de o agente
+ * arrancar. Clona o que faltar, atualiza as referências do que já lá estiver.
+ *
+ * Não faz reset nem checkout à força: se um job anterior deixou trabalho por
+ * committar na mesma pasta, é o agente que decide o que fazer com ele. Perder
+ * trabalho em silêncio seria pior do que uma árvore suja.
+ */
+async function ensureRepos(job) {
+  if (!Array.isArray(job.repos) || job.repos.length === 0) return
+  job.repos_status = []
+  for (const nome of job.repos) {
+    const slug = String(nome).includes('/') ? String(nome) : `${GITHUB_ORG}/${nome}`
+    const curto = slug.split('/').pop()
+    const destino = path.join(job.workspace, curto)
+    const url = `https://github.com/${slug}.git`
+    let r
+    if (existsSync(path.join(destino, '.git'))) {
+      r = await run('git', ['-C', destino, 'fetch', '--all', '--prune', '--quiet'])
+      job.repos_status.push({ repo: slug, acao: 'fetch', ok: r.code === 0, saida: r.code === 0 ? null : r.out })
+    } else {
+      const args = ['clone', '--quiet']
+      if (GIT_CLONE_DEPTH > 0) args.push('--depth', String(GIT_CLONE_DEPTH))
+      args.push(url, destino)
+      r = await run('git', args)
+      job.repos_status.push({ repo: slug, acao: 'clone', ok: r.code === 0, saida: r.code === 0 ? null : r.out })
+    }
+    if (r.code !== 0) {
+      throw new Error(`git falhou em ${slug}: ${r.out.slice(-400)}`)
+    }
+    log(`job ${job.id}: ${slug} pronto em ${destino}`)
+  }
+}
+
 async function runJob(job) {
   job.status = 'running'
   job.started_at = new Date().toISOString()
   await fs.mkdir(job.workspace, { recursive: true })
+  await ensureRepos(job)
   job.mcp_config_path = await writeJobMcpConfig(job)
   await persist(job)
 
@@ -482,6 +534,8 @@ app.post('/jobs', async (req, res) => {
     append_system_prompt: b.append_system_prompt || null,
     json_schema: b.json_schema || null,
     add_dirs: Array.isArray(b.add_dirs) ? b.add_dirs.map(String) : null,
+    // Repositórios a clonar/atualizar no workspace antes do agente arrancar.
+    repos: Array.isArray(b.repos) ? b.repos.map(String) : null,
     extra_args: Array.isArray(b.extra_args) ? b.extra_args.map(String) : null,
     env: b.env && typeof b.env === 'object' ? b.env : null,
     timeout_ms: Number(b.timeout_ms) || DEFAULT_TIMEOUT_MS,

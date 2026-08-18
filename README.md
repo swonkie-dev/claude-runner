@@ -224,6 +224,45 @@ Ordem de preferência, da barreira mais forte para a mais fraca:
 3. **`tools` / `disallowed_tools`** — a ferramenta não é oferecida ao modelo.
 4. **Instruções no prompt** — uma sugestão forte, não um cadeado.
 
+## Repositórios como contexto
+
+O campo `repos` clona ou atualiza repositórios dentro do workspace **antes** de o
+agente arrancar, usando o `GH_TOKEN` já configurado.
+
+```jsonc
+{
+  "prompt": "…",
+  "workspace": "site",
+  "repos": ["swonkie-homepage", "swonkie-dev/landing-pages"],
+  "tools": ["Read", "Bash", "Edit", "Write"]
+}
+```
+
+Nome curto usa o `GITHUB_ORG`; com barra, o slug completo. O clone é raso
+(`GIT_CLONE_DEPTH`, 50 por omissão) porque o histórico completo raramente serve e
+custa minutos. Se o repositório já lá estiver, faz `fetch` e **não** mexe na
+árvore de trabalho: trabalho por committar de um job anterior é do agente para
+resolver, não meu para apagar em silêncio. Uma falha do git aborta o job com a
+saída do git no erro, em vez de deixar o agente a trabalhar sem o código.
+
+Combina com um `workspace` fixo para os clones sobreviverem entre jobs: o segundo
+job passa a ser um `fetch` em vez de um clone.
+
+### Os `CLAUDE.md` dos repositórios
+
+Os repositórios que trazem `CLAUDE.md` e `.claude/memory/` carregam consigo as
+convenções da equipa, que é metade do contexto que o agente precisa. Mas o
+Claude Code descobre automaticamente o `CLAUDE.md` a partir do diretório de
+trabalho **para cima**, e aqui os repositórios ficam abaixo dele.
+
+Não contes com a descoberta automática. **Diz no prompt**, explicitamente:
+
+> Antes de mexeres em `<repo>`, lê o `CLAUDE.md` e os ficheiros em
+> `<repo>/.claude/memory/`. São as convenções da equipa e mandam sobre o que
+> aqui está escrito.
+
+Custa duas linhas e é determinístico.
+
 ## Limite de utilização e reagendamento
 
 Com autenticação por subscrição, bater na janela de utilização é rotina, não
