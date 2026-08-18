@@ -8,12 +8,20 @@ set -e
 # imagem (só o playwright).
 MCP_CONFIG="${MCP_CONFIG:-/home/node/mcp.json}"
 if [ -n "$MCP_CONFIG_JSON" ]; then
+  # Escape hatch: JSON completo fornecido à mão. Frágil se vier de um painel de
+  # gestão, que costuma reescrever aspas e expandir ${...}; por isso é validado.
   printf '%s' "$MCP_CONFIG_JSON" > "$MCP_CONFIG"
   if ! node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$MCP_CONFIG"; then
     echo "entrypoint: MCP_CONFIG_JSON não é JSON válido, a abortar." >&2
+    echo "entrypoint: se estás a usar um painel, apaga essa variável e usa as" >&2
+    echo "entrypoint: variáveis simples (SWONKIE_MCP_URL, TEAMS_MCP_URL, ...)." >&2
     exit 1
   fi
   echo "entrypoint: mcp.json escrito a partir de MCP_CONFIG_JSON"
+else
+  # Caminho normal: construído a partir de variáveis simples, que sobrevivem a
+  # qualquer painel. Um servidor sem credenciais é omitido, não fica partido.
+  node /home/node/build-mcp.mjs "$MCP_CONFIG"
 fi
 
 git config --global init.defaultBranch main

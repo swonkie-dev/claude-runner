@@ -62,21 +62,14 @@ services:
       FAIL_ON_MCP_ERROR: "true"
 
       # --- MCPs ---
-      # O JSON completo numa variável. O entrypoint escreve-o no arranque e
-      # valida-o; se não for JSON válido, o container não sobe.
+      # Variáveis simples, uma por servidor. O container monta o mcp.json a
+      # partir daqui no arranque.
       #
-      # ATENÇÃO ao $$: é escape do Compose, que produz um $ literal. Sem ele as
-      # variáveis eram substituídas por vazio ANTES do arranque, todos os MCPs
-      # falhavam e todos os jobs abortavam. Verificado em container.
-      MCP_CONFIG_JSON: >-
-        {"mcpServers":{
-        "playwright":{"command":"playwright-mcp","args":["--headless","--isolated"]},
-        "swonkie":{"type":"http","url":"$${SWONKIE_MCP_URL}"},
-        "teams":{"type":"http","url":"$${TEAMS_MCP_URL}","headers":{"Authorization":"$${TEAMS_AUTHORIZATION}","CF-Access-Client-Id":"$${CF_ACCESS_CLIENT_ID}","CF-Access-Client-Secret":"$${CF_ACCESS_CLIENT_SECRET}"}},
-        "hievents":{"type":"http","url":"$${HIEVENTS_MCP_URL}","headers":{"Authorization":"$${HIEVENTS_AUTHORIZATION}","CF-Access-Client-Id":"$${CF_ACCESS_CLIENT_ID}","CF-Access-Client-Secret":"$${CF_ACCESS_CLIENT_SECRET}"}},
-        "posthog":{"type":"http","url":"https://mcp.posthog.com/mcp","headers":{"Authorization":"Bearer $${POSTHOG_API_KEY}"}}
-        }}
-
+      # NÃO uses uma variável com o JSON completo lá dentro: o painel do ZimaOS
+      # apaga as aspas e expande os ${...} para vazio, e o container recusa-se
+      # a arrancar. Foi por isso que isto passou a ser assim.
+      #
+      # Um servidor sem os valores preenchidos é simplesmente omitido.
       SWONKIE_MCP_URL: COLOCAR_URL_MCP_SWONKIE
       TEAMS_MCP_URL: COLOCAR_URL_MCP_TEAMS
       TEAMS_AUTHORIZATION: COLOCAR_AUTHORIZATION_TEAMS

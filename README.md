@@ -287,18 +287,30 @@ O `mcp.json` vive em `/home/node/mcp.json` e é passado a cada job com
 `--mcp-config` e `--strict-mcp-config`, o que ignora qualquer configuração de
 MCP herdada do home. É a única fonte de verdade.
 
-**Duas formas de o definir.** Montar um ficheiro em `/home/node/mcp.json`, ou
-definir **`MCP_CONFIG_JSON`** com o JSON completo: o entrypoint escreve-o no
-arranque e valida-o, e o container não sobe se for JSON inválido. A segunda
-permite fazer o deploy inteiro por painel, sem ficheiros na máquina anfitriã.
-Sem nenhuma das duas, fica a configuração mínima que vem na imagem, só com o
-playwright.
+**O container monta-o sozinho a partir de variáveis simples**, no arranque.
+Defines `SWONKIE_MCP_URL`, `TEAMS_MCP_URL`, `POSTHOG_API_KEY` e companhia, e o
+`build-mcp.mjs` gera o ficheiro. Um servidor sem os valores preenchidos é
+**omitido**, não fica meio configurado a fazer abortar os jobs.
 
-> ⚠️ **Ao pôr `MCP_CONFIG_JSON` num ficheiro compose, escapa os `$` como `$$`.**
-> O Compose interpola `${VAR}` no YAML *antes* de o container arrancar, e sem o
-> escape todas as variáveis chegam vazias, todos os MCPs falham e todos os jobs
-> abortam. `$${SWONKIE_MCP_URL}` no YAML chega ao container como
-> `${SWONKIE_MCP_URL}`, que é o que o Claude Code expande. Verificado.
+| Servidor | Variáveis |
+|---|---|
+| `playwright` | nenhuma, está sempre presente |
+| `swonkie` / `swonkie-br` | `SWONKIE_MCP_URL` / `SWONKIE_BR_MCP_URL` |
+| `teams` | `TEAMS_MCP_URL`, `TEAMS_AUTHORIZATION` |
+| `hievents` | `HIEVENTS_MCP_URL`, `HIEVENTS_AUTHORIZATION` |
+| `posthog` | `POSTHOG_API_KEY`, opcionalmente `POSTHOG_MCP_URL` |
+| `n8n` | `N8N_API_URL` + `N8N_API_KEY` |
+
+Endpoints atrás de Cloudflare Access herdam `CF_ACCESS_CLIENT_ID` e
+`CF_ACCESS_CLIENT_SECRET`. O prefixo `Bearer` é acrescentado se faltar e não é
+duplicado se já lá estiver.
+
+> ⚠️ **Não uses uma variável com o JSON completo lá dentro.** Existe um escape
+> hatch, `MCP_CONFIG_JSON`, mas painéis de gestão reescrevem os valores que lhes
+> passam: o do ZimaOS **apaga as aspas do JSON e expande `${...}` para vazio**,
+> mesmo com `$$`. O container deteta e recusa-se a arrancar, mas o problema
+> repete-se a cada edição. Variáveis simples sobrevivem a isso; JSON não. Foi
+> por isto que o desenho mudou.
 
 **`${VARIAVEL}` é expandido** a partir do ambiente do container, tanto em `url`
 como em `args` e `env`. Verificado empiricamente. Portanto os segredos ficam no

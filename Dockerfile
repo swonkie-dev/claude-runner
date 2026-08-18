@@ -142,6 +142,7 @@ COPY --chown=node:node server/package.json /home/node/server/
 RUN cd /home/node/server && npm install --omit=dev
 COPY --chown=node:node server/index.js /home/node/server/
 COPY --chown=node:node entrypoint.sh /home/node/entrypoint.sh
+COPY --chown=node:node build-mcp.mjs /home/node/build-mcp.mjs
 # Configuração mínima de MCPs, substituída em runtime por MCP_CONFIG_JSON.
 COPY --chown=node:node mcp.default.json /home/node/mcp.json
 RUN chmod +x /home/node/entrypoint.sh
