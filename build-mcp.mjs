@@ -39,14 +39,26 @@ const cf = has('CF_ACCESS_CLIENT_ID', 'CF_ACCESS_CLIENT_SECRET')
     }
   : {}
 
-const viaN8n = (nome, urlKey, authKey) => {
-  if (!has(urlKey)) return
+// Servidores expostos por MCP Server Triggers do n8n. Todos seguem a mesma
+// forma: URL do trigger, um header Authorization, e os headers do Cloudflare
+// Access. Em vez de os enumerar aqui, lê a lista de N8N_MCP_SERVERS e procura
+// as variáveis por convenção, para acrescentar um novo não exigir código.
+//
+//   N8N_MCP_SERVERS=teams,hievents,clickup
+//   TEAMS_MCP_URL / TEAMS_AUTHORIZATION
+//   CLICKUP_MCP_URL / CLICKUP_AUTHORIZATION
+//
+// Um servidor cuja URL não esteja definida é simplesmente omitido.
+const brokered = val('N8N_MCP_SERVERS') || 'teams,hievents'
+for (const nome of brokered.split(',').map(x => x.trim()).filter(Boolean)) {
+  const chave = nome.toUpperCase().replace(/[^A-Z0-9]+/g, '_')
+  const urlKey = `${chave}_MCP_URL`
+  if (!has(urlKey)) continue
   const headers = { ...cf }
+  const authKey = `${chave}_AUTHORIZATION`
   if (has(authKey)) headers.Authorization = bearer(val(authKey))
   servers[nome] = { type: 'http', url: val(urlKey), ...(Object.keys(headers).length ? { headers } : {}) }
 }
-viaN8n('teams', 'TEAMS_MCP_URL', 'TEAMS_AUTHORIZATION')
-viaN8n('hievents', 'HIEVENTS_MCP_URL', 'HIEVENTS_AUTHORIZATION')
 
 if (has('POSTHOG_API_KEY')) {
   servers.posthog = {
