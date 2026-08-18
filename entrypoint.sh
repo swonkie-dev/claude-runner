@@ -41,4 +41,15 @@ fi
 # (husky), e os gates de pre-commit são obrigatórios: contorná-los deixa passar
 # código que não compila. A proteção de branches vive no GitHub, não aqui.
 
+# Sem argumentos, arranca o servidor à mesma. Alguns painéis (o importador do
+# ZimaOS, por exemplo) escrevem `command: []` no compose, o que apaga o CMD da
+# imagem. Sem esta rede de segurança o `exec "$@"` não executava nada, o script
+# terminava, o container saía com código 0 e o `restart: unless-stopped`
+# reiniciava-o para sempre, sem nunca dar um erro que explicasse porquê.
+if [ "$#" -eq 0 ]; then
+  echo "entrypoint: sem argumentos (CMD apagado pelo orquestrador?), a arrancar o servidor"
+  set -- node /home/node/server/index.js
+fi
+
+echo "entrypoint: a executar -> $*"
 exec "$@"
