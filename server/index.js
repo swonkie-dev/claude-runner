@@ -38,6 +38,15 @@ const STDERR_CAP = 64 * 1024
 // ferramentas e devolve um resultado plausível mas sem capacidades. O evento
 // `system/init` é o único sítio onde isso aparece. Verificado em agosto de 2026.
 const FAIL_ON_MCP_ERROR = process.env.FAIL_ON_MCP_ERROR !== 'false'
+// Defaults de privilégio, aplicados quando o pedido não os declara. Se não
+// forem definidos, um job sem `mcp`/`tools` herda TUDO: todos os servidores MCP
+// e todas as ferramentas, incluindo Bash e escrita. Num sistema que corre com
+// bypassPermissions isso é falhar em aberto, por isso vale a pena defini-los.
+// Lista vazia (variável definida mas sem valor) significa "nenhum".
+const lista = v => (v === undefined ? null : v.split(',').map(x => x.trim()).filter(Boolean))
+const DEFAULT_MCP = lista(process.env.DEFAULT_MCP)
+const DEFAULT_TOOLS = lista(process.env.DEFAULT_TOOLS)
+const DEFAULT_DISALLOWED_TOOLS = lista(process.env.DEFAULT_DISALLOWED_TOOLS)
 const RESCHEDULE_ON_RATE_LIMIT = process.env.RESCHEDULE_ON_RATE_LIMIT !== 'false'
 const MAX_RESCHEDULES = Number(process.env.MAX_RESCHEDULES || 3)
 const SWEEP_INTERVAL_MS = 30_000
@@ -464,11 +473,12 @@ app.post('/jobs', async (req, res) => {
     model: b.model || DEFAULT_MODEL || null,
     effort: b.effort || DEFAULT_EFFORT || null,
     max_budget_usd: Number(b.max_budget_usd) || DEFAULT_MAX_BUDGET_USD || null,
-    tools: b.tools || null,
-    // Allowlist de servidores MCP para este job. Omitir herda todos.
-    mcp: Array.isArray(b.mcp) ? b.mcp.map(String) : null,
+    tools: b.tools || DEFAULT_TOOLS,
+    // Allowlist de servidores MCP para este job. Omitir cai no DEFAULT_MCP;
+    // sem esse definido, herda todos os configurados.
+    mcp: Array.isArray(b.mcp) ? b.mcp.map(String) : DEFAULT_MCP,
     allowed_tools: b.allowed_tools || null,
-    disallowed_tools: b.disallowed_tools || null,
+    disallowed_tools: b.disallowed_tools || DEFAULT_DISALLOWED_TOOLS,
     append_system_prompt: b.append_system_prompt || null,
     json_schema: b.json_schema || null,
     add_dirs: Array.isArray(b.add_dirs) ? b.add_dirs.map(String) : null,
@@ -562,6 +572,12 @@ const server = app.listen(PORT, () => {
   if (!process.env.ANTHROPIC_API_KEY && !process.env.CLAUDE_CODE_OAUTH_TOKEN) {
     log('AVISO: nem ANTHROPIC_API_KEY nem CLAUDE_CODE_OAUTH_TOKEN definidos')
   }
+  if (DEFAULT_MCP === null || DEFAULT_TOOLS === null) {
+    log('AVISO: sem DEFAULT_MCP/DEFAULT_TOOLS, um job que não declare privilégios'
+      + ' recebe TODOS os MCPs e TODAS as ferramentas, incluindo Bash e escrita.')
+  }
+  log(`privilégio por omissão -> mcp: ${DEFAULT_MCP ? JSON.stringify(DEFAULT_MCP) : 'todos'}`
+    + `, tools: ${DEFAULT_TOOLS ? JSON.stringify(DEFAULT_TOOLS) : 'todas'}`)
 })
 
 for (const signal of ['SIGTERM', 'SIGINT']) {

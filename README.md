@@ -166,6 +166,17 @@ Filtrar ferramentas não serve de nada se o servidor expuser um único `exec` ou
 **âmbito da credencial**: uma chave de API só de leitura torna a escrita
 impossível, mesmo que o agente tente.
 
+### O que acontece se o pedido não declarar nada
+
+Por omissão, **tudo**: todos os servidores MCP configurados e todas as
+ferramentas, incluindo Bash e escrita. É falhar em aberto.
+
+Define `DEFAULT_MCP`, `DEFAULT_TOOLS` e `DEFAULT_DISALLOWED_TOOLS` para inverter
+isso. Variável definida mas vazia significa *nenhum*; não definida significa
+*tudo*. Com `DEFAULT_MCP=` e `DEFAULT_TOOLS=Read,Grep,Glob`, um job que não peça
+nada fica sem MCPs e sem shell, e cada workflow declara explicitamente o que
+precisa. O runner avisa no arranque quando estes defaults não estão definidos.
+
 Ordem de preferência, da barreira mais forte para a mais fraca:
 
 1. **Âmbito da credencial** — o servidor não consegue fazer a operação.
