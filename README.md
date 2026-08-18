@@ -152,6 +152,21 @@ O padrão que funciona sem timeouts:
 Se preferires polling, troca o Wait por um loop com `GET /jobs/:id` e um Wait de
 30s, mas o callback é mais limpo e não gasta execuções.
 
+> ⚠️ **Se o orquestrador estiver atrás de um proxy com autenticação** (Cloudflare
+> Access, Authelia, uma VPN), o `$execution.resumeUrl` aponta para o domínio
+> público e o callback do runner sai para a internet, leva 403 e o workflow fica
+> preso no Wait para sempre. O job aparece como `done` nos logs e nada volta.
+>
+> Reescreve o host para o nome interno do container, já que ambos partilham a
+> rede docker e por dentro não há proxy nenhum pelo meio:
+>
+> ```
+> {{ $execution.resumeUrl.replace(/^https?:\/\/[^/]+/, 'http://n8n:5678') }}
+> ```
+>
+> Para diagnosticar: `GET /jobs/:id` devolve `callback_status` e
+> `callback_error`, que dizem exatamente o que aconteceu ao POST de volta.
+
 **Conversas com continuidade:** guarda o `session_id` que vem no callback e
 envia-o no job seguinte. Combina com `workspace` fixo para os ficheiros também
 persistirem.
