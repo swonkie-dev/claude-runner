@@ -145,8 +145,15 @@ O padrão que funciona sem timeouts:
 1. **HTTP Request** → `POST http://claude-runner:8080/jobs`
    (o hostname é o nome do serviço; os containers têm de partilhar a rede)
    Header `Authorization: Bearer {{$env.RUNNER_TOKEN}}`.
-2. **Wait** em modo *On Webhook Call*. Põe o `$execution.resumeUrl` como
-   `callback_url` no passo anterior.
+2. **Wait** em modo *On Webhook Call*, com **HTTP Method: POST**. Põe o
+   `$execution.resumeUrl` como `callback_url` no passo anterior.
+
+   > ⚠️ **O `httpMethod` do Wait é `GET` por omissão e o runner faz `POST`.**
+   > Se te esqueceres disto, o callback leva `404` com a mensagem
+   > *"does not contain a waiting webhook with a matching path/method"*, o job
+   > aparece `done` nos logs e o workflow fica preso à espera para sempre. É o
+   > erro mais fácil de fazer e o mais difícil de adivinhar, porque tudo o resto
+   > parece bem.
 3. O workflow continua sozinho quando o job terminar, com o resultado no body.
 
 Se preferires polling, troca o Wait por um loop com `GET /jobs/:id` e um Wait de
