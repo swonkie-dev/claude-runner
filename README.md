@@ -152,13 +152,20 @@ O padrão que funciona sem timeouts:
 Se preferires polling, troca o Wait por um loop com `GET /jobs/:id` e um Wait de
 30s, mas o callback é mais limpo e não gasta execuções.
 
-> ⚠️ **Se o orquestrador estiver atrás de um proxy com autenticação** (Cloudflare
-> Access, Authelia, uma VPN), o `$execution.resumeUrl` aponta para o domínio
-> público e o callback do runner sai para a internet, leva 403 e o workflow fica
-> preso no Wait para sempre. O job aparece como `done` nos logs e nada volta.
+> ⚠️ **Não confies no `$execution.resumeUrl` tal como vem.** É a causa número um
+> de o workflow ficar preso no Wait com o job a aparecer `done` nos logs. O URL é
+> gerado pelo n8n e pode não ser alcançável a partir do container, por três
+> motivos diferentes:
 >
-> Reescreve o host para o nome interno do container, já que ambos partilham a
-> rede docker e por dentro não há proxy nenhum pelo meio:
+> - **`WEBHOOK_URL` não definido** no n8n: o URL sai como
+>   `http://localhost:5678/...` e o runner tenta ligar-se a si próprio;
+> - **proxy com autenticação à frente** (Cloudflare Access, Authelia, VPN): o
+>   pedido sai para a internet e leva 403;
+> - **DNS ou NAT loopback** a não resolver de dentro da rede docker.
+>
+> Reescreve o host para o nome interno do container e o problema desaparece nos
+> três casos, porque deixas de depender do que o n8n gera. Ambos partilham a
+> rede docker, e por dentro não há proxy nenhum pelo meio:
 >
 > ```
 > {{ $execution.resumeUrl.replace(/^https?:\/\/[^/]+/, 'http://n8n:5678') }}
