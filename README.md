@@ -124,62 +124,102 @@ O callback recebe:
 ## Privilégio mínimo por job
 
 O pedido declara o que aquele trabalho pode usar. É melhor do que restringir o
-servidor MCP partilhado, porque não afeta mais ninguém e fica explícito no
-workflow que dispara.
+servidor MCP partilhado: não afeta mais ninguém, e fica explícito no workflow que
+dispara em vez de escondido numa configuração global.
 
-**`mcp`: a fronteira que interessa.** Lista de servidores para este job. O
-runner escreve um `mcp.json` só com esses e aponta-lhe o `--mcp-config`. Um
-servidor que não esteja na lista **nem sequer é ligado**, portanto o agente não
-lá chega, aconteça o que acontecer no prompt. Um nome errado devolve `400` com a
-lista dos disponíveis, em vez de dar um job silenciosamente sem ferramentas.
+### Dois eixos independentes
+
+| Campo | Controla | Tipo |
+|---|---|---|
+| `mcp` | que servidores MCP são ligados | allowlist |
+| `tools` | que ferramentas built-in existem na sessão | allowlist |
+| `disallowed_tools` | corta built-ins **e** ferramentas MCP | blocklist |
+
+Um job com `"tools": ["Read"]` e `"mcp": ["swonkie"]` fica sem shell mas com todas
+as ferramentas da Swonkie. Cortar built-ins não corta MCPs, e vice-versa.
 
 ```jsonc
-{ "prompt": "…", "mcp": ["swonkie"] }   // só a Swonkie
-{ "prompt": "…", "mcp": [] }            // nenhum MCP
-{ "prompt": "…" }                       // todos os configurados
+{ "prompt": "…", "mcp": ["swonkie"], "tools": ["Read"] }   // só ler a Swonkie
+{ "prompt": "…", "mcp": [] }                                // sem MCP nenhum
+{ "prompt": "…", "tools": [] }                              // sem built-ins
+{ "prompt": "…" }                                           // ver Defaults
 ```
 
-**`tools`: allowlist dos built-ins.** `"tools": ["Read","Grep"]` deixa a sessão
-exatamente com essas. Verificado: o Bash desaparece e o modelo diz que não o tem.
+`mcp` é a barreira mais forte das três: um servidor fora da lista **nem sequer é
+ligado**, portanto não há prompt que lá chegue. Um nome desconhecido devolve
+`400` com a lista dos disponíveis, em vez de correr em silêncio sem ferramentas
+e devolver um resultado plausível mas oco.
 
-**`disallowed_tools`: blocklist.** Corta built-ins e ferramentas MCP
-(`mcp__servidor__ferramenta`). Verificado com `Bash`.
+### Descobrir os nomes das ferramentas
 
-> ⚠️ **`allowed_tools` não restringe nada em modo headless.** Verificado com e
-> sem `bypassPermissions`, e com as definições do utilizador desligadas: o modelo
-> usou o Bash na mesma, sem uma única negação registada. É uma lista de
-> *permissões*, não de capacidades. **Não o uses como barreira de segurança.**
+Os nomes válidos para `tools` dependem da versão do Claude Code e dos plugins
+instalados. **Não copies listas de fora, pergunta ao teu container:**
 
-Quadro do que funciona, tudo verificado empiricamente:
+```bash
+docker exec <runner> claude -p "ok" --output-format stream-json --verbose \
+  | head -1 | jq -r '.tools[]' | sort
+```
+
+As ferramentas MCP aparecem como `mcp__<servidor>__<ferramenta>` e só servem para
+`disallowed_tools`; para as escolher, usa o `mcp`.
+
+### Defaults: por omissão é tudo
+
+Sem `DEFAULT_MCP` / `DEFAULT_TOOLS` definidos, um job que não declare nada recebe
+**todos** os servidores MCP e **todas** as ferramentas, Bash e escrita incluídos.
+É falhar em aberto, e num sistema que corre com `bypassPermissions` é o default
+errado.
+
+| Estado da variável | Significado |
+|---|---|
+| não definida | tudo |
+| definida mas vazia | nenhum |
+| com lista | exatamente essa lista |
+
+Recomendado:
+
+```bash
+DEFAULT_MCP=
+DEFAULT_TOOLS=Read
+DEFAULT_DISALLOWED_TOOLS=
+```
+
+Assim o privilégio passa a ser **concedido**, não herdado: quem precisa de mais
+declara-o no pedido, e isso fica visível no workflow. O runner avisa no arranque
+quando estes defaults não estão definidos, e regista sempre o privilégio efetivo.
+
+### O que funciona mesmo
+
+Tudo verificado empiricamente contra o CLI, não deduzido da documentação:
 
 | Mecanismo | Efeito | Aplica-se a |
 |---|---|---|
+| Âmbito da credencial | o servidor não **consegue** fazer a operação | tudo |
 | `mcp: [...]` | o servidor nem é ligado | servidores MCP |
 | `tools: [...]` | allowlist | built-ins |
-| `disallowed_tools: [...]` | blocklist | built-ins e ferramentas MCP |
+| `disallowed_tools: [...]` | blocklist | built-ins e MCP |
 | `allowed_tools: [...]` | **nenhum** | — |
+
+> ⚠️ **`allowed_tools` não restringe nada em modo headless.** Testado com e sem
+> `bypassPermissions`, e com as definições do utilizador desligadas: o modelo usou
+> o Bash na mesma, sem uma única negação registada. É uma lista de *permissões*,
+> não de capacidades. **Não o uses como barreira de segurança.**
 
 ### Quando o MCP expõe uma só ferramenta genérica
 
 Filtrar ferramentas não serve de nada se o servidor expuser um único `exec` ou
-`raw_api_request` que aceita qualquer operação. Aí a única barreira real é o
-**âmbito da credencial**: uma chave de API só de leitura torna a escrita
-impossível, mesmo que o agente tente.
+`raw_api_request` que aceita qualquer operação. O MCP do PostHog é assim: tem uma
+ferramenta só, portanto não há como permitir "apenas SQL" pela via das
+ferramentas.
 
-### O que acontece se o pedido não declarar nada
-
-Por omissão, **tudo**: todos os servidores MCP configurados e todas as
-ferramentas, incluindo Bash e escrita. É falhar em aberto.
-
-Define `DEFAULT_MCP`, `DEFAULT_TOOLS` e `DEFAULT_DISALLOWED_TOOLS` para inverter
-isso. Variável definida mas vazia significa *nenhum*; não definida significa
-*tudo*. Com `DEFAULT_MCP=` e `DEFAULT_TOOLS=Read,Grep,Glob`, um job que não peça
-nada fica sem MCPs e sem shell, e cada workflow declara explicitamente o que
-precisa. O runner avisa no arranque quando estes defaults não estão definidos.
+Aí a única barreira real é o **âmbito da credencial**. Uma chave de API só de
+leitura torna a escrita impossível, por muito bem escrita que esteja a injeção.
+Vale a pena criar credenciais dedicadas ao agente, separadas das pessoais: além
+da segurança, passas a distinguir nos logs do serviço o que foi o agente.
 
 Ordem de preferência, da barreira mais forte para a mais fraca:
 
-1. **Âmbito da credencial** — o servidor não consegue fazer a operação.
+1. **Âmbito da credencial** — o serviço recusa a operação.
 2. **`mcp`** — o servidor não é ligado.
 3. **`tools` / `disallowed_tools`** — a ferramenta não é oferecida ao modelo.
 4. **Instruções no prompt** — uma sugestão forte, não um cadeado.
