@@ -37,6 +37,11 @@ const STDERR_CAP = 64 * 1024
 // ferramentas e devolve um resultado plausível mas sem capacidades. O evento
 // `system/init` é o único sítio onde isso aparece. Verificado em agosto de 2026.
 const FAIL_ON_MCP_ERROR = process.env.FAIL_ON_MCP_ERROR !== 'false'
+// Hosts atrás de Cloudflare Access aos quais os callbacks devem levar o service
+// token. Lista separada por vírgulas; sem isto o token não é enviado a lado
+// nenhum, para não o entregar a um host de terceiros por engano.
+const CF_ACCESS_HOSTS = (process.env.CF_ACCESS_HOSTS || '')
+  .split(',').map(h => h.trim().toLowerCase()).filter(Boolean)
 const RESCHEDULE_ON_RATE_LIMIT = process.env.RESCHEDULE_ON_RATE_LIMIT !== 'false'
 const MAX_RESCHEDULES = Number(process.env.MAX_RESCHEDULES || 3)
 const SWEEP_INTERVAL_MS = 30_000
@@ -110,6 +115,19 @@ async function notify(job, event) {
   }).catch(err => log(`notify falhou para ${job.id}: ${err.message}`))
 }
 
+/** Cabeçalhos do callback, mais o service token se o destino o exigir. */
+function callbackHeaders(job) {
+  const headers = { 'content-type': 'application/json', ...(job.callback_headers || {}) }
+  try {
+    const host = new URL(job.callback_url).hostname.toLowerCase()
+    if (CF_ACCESS_HOSTS.includes(host) && process.env.CF_ACCESS_CLIENT_ID) {
+      headers['CF-Access-Client-Id'] = process.env.CF_ACCESS_CLIENT_ID
+      headers['CF-Access-Client-Secret'] = process.env.CF_ACCESS_CLIENT_SECRET
+    }
+  } catch { /* URL inválido: o fetch falha e é registado à frente */ }
+  return headers
+}
+
 async function fireCallback(job) {
   if (!job.callback_url) return
   const body = JSON.stringify({
@@ -126,18 +144,25 @@ async function fireCallback(job) {
     mcp_servers: job.mcp_servers,
     meta: job.meta,
   })
-  const headers = { 'content-type': 'application/json', ...(job.callback_headers || {}) }
+  const headers = callbackHeaders(job)
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
+      // redirect: 'manual' é essencial. Com o comportamento por omissão, um
+      // destino atrás de autenticação (Cloudflare Access, Authelia) responde
+      // 302 para a página de login, o fetch segue-a, essa devolve 200, e isto
+      // registava sucesso quando o callback nunca chegou ao destino.
       const res = await fetch(job.callback_url, { method: 'POST', headers, body,
-        signal: AbortSignal.timeout(30_000) })
-      if (res.ok) {
-        job.callback_status = res.status
+        redirect: 'manual', signal: AbortSignal.timeout(30_000) })
+      job.callback_status = res.status
+      if (res.status >= 200 && res.status < 300) {
         await persist(job)
         return
       }
-      job.callback_status = res.status
+      if (res.status >= 300 && res.status < 400) {
+        job.callback_error = `redirect ${res.status} para ${res.headers.get('location') || '?'}`
+          + ' — o destino está atrás de autenticação. Ver CF_ACCESS_HOSTS.'
+      }
     } catch (err) {
       job.callback_error = String(err?.message || err)
     }

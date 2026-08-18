@@ -79,6 +79,11 @@ services:
       CF_ACCESS_CLIENT_SECRET: COLOCAR_CF_ACCESS_CLIENT_SECRET
       POSTHOG_API_KEY: COLOCAR_CHAVE_PESSOAL_POSTHOG
 
+      # Hosts aos quais os callbacks levam o service token do Cloudflare Access.
+      # Sem isto, um callback para um endpoint protegido leva 302 para a pagina
+      # de login e o workflow fica preso a espera para sempre.
+      CF_ACCESS_HOSTS: COLOCAR_HOST_DO_ORQUESTRADOR
+
       # --- git ---
       GH_TOKEN: COLOCAR_PAT_FINE_GRAINED
       GIT_AUTHOR_NAME: Claude Runner (Swonkie)

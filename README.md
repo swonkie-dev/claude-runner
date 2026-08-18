@@ -152,28 +152,32 @@ O padrão que funciona sem timeouts:
 Se preferires polling, troca o Wait por um loop com `GET /jobs/:id` e um Wait de
 30s, mas o callback é mais limpo e não gasta execuções.
 
-> ⚠️ **Não reescrevas o host do `$execution.resumeUrl`.** O n8n **assina** o URL
-> de retoma (`?signature=...`) e a assinatura cobre o URL original. Trocar o host
-> invalida-a e o n8n responde **404**, com o job a aparecer `done` nos logs e o
-> workflow preso no Wait para sempre. Sem a assinatura responde **401**, o que
-> ajuda a distinguir os casos.
+> ⚠️ **Se o orquestrador estiver atrás de Cloudflare Access, o callback não
+> chega.** O `/webhook/` pode estar em bypass e o `/webhook-waiting/` não estar:
+> o callback leva `302` para a página de login e o workflow fica preso no Wait
+> para sempre. Define `CF_ACCESS_HOSTS` com o host do orquestrador e o runner
+> junta o service token (`CF_ACCESS_CLIENT_ID` / `_SECRET`) ao callback.
 >
-> Se o domínio público não for alcançável de dentro da rede docker (hairpin NAT,
-> DNS interno, proxy com autenticação), a solução **não** é mexer no URL: é
-> mapear o nome para o IP interno no container do runner, mantendo o URL
-> byte a byte igual ao que foi assinado.
->
-> ```yaml
-> extra_hosts:
->   - "n8n.exemplo.com:172.18.0.5"   # IP do container do orquestrador
-> ```
->
-> Diagnóstico, sem precisar de token:
->
-> ```bash
-> docker exec <runner> sh -c 'cat /work/jobs/<job_id>/job.json' \
->   | jq '{callback_url, callback_status, callback_error}'
-> ```
+> A alternativa é acrescentar `/webhook-waiting/*` às regras de bypass do
+> Cloudflare Access. É menos trabalho, mas expõe o endpoint: o n8n assina esses
+> URLs, portanto não é temerário, mas o service token é mais apertado.
+
+> ⚠️ **Não reescrevas o host do `$execution.resumeUrl` para resolver isso.** O
+> n8n **assina** o URL de retoma (`?signature=...`) e a assinatura cobre o URL
+> original. Trocar o host invalida-a e o n8n responde **404**. Se o domínio
+> público não for alcançável de dentro da rede docker, usa `extra_hosts` para
+> mapear o nome para o IP interno, mantendo o URL byte a byte igual.
+
+Tabela de sintomas do callback, que se lê com
+`docker exec <runner> sh -c 'cat /work/jobs/<job_id>/job.json' | jq '{callback_url, callback_status, callback_error}'`:
+
+| `callback_status` | Causa provável |
+|---|---|
+| `200` e a execução na mesma parada | o Wait não retomou; ver os outros campos |
+| `302` | destino atrás de autenticação: falta `CF_ACCESS_HOSTS` |
+| `404` | URL errado, tipicamente o host reescrito a invalidar a assinatura |
+| `401` | chegou ao endpoint certo sem a assinatura |
+| `null` com `callback_error` | não houve resposta: DNS, rede ou timeout |
 
 **Conversas com continuidade:** guarda o `session_id` que vem no callback e
 envia-o no job seguinte. Combina com `workspace` fixo para os ficheiros também
