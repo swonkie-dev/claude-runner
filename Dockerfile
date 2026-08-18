@@ -51,8 +51,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # `intel-media-va-driver` (livre) instala e arranca, mas fica com menos codecs
 # de encode, que é precisamente o que interessa para transcodificar vídeo.
 # Para AMD: troca por `mesa-va-drivers` e remove o LIBVA_DRIVER_NAME abaixo.
-RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" \
-      > /etc/apt/sources.list.d/nonfree.list \
+# A imagem base usa o formato deb822 em /etc/apt/sources.list.d/debian.sources,
+# com `Signed-By` definido. Acrescentar uma segunda fonte para o mesmo
+# repositório sem esse campo dá "Conflicting values set for option Signed-By" e
+# o apt recusa-se a ler a lista toda. Por isso acrescentam-se os componentes à
+# fonte existente, em vez de se criar outra.
+RUN sed -i 's/^Components: main$/Components: main contrib non-free non-free-firmware/' \
+      /etc/apt/sources.list.d/debian.sources \
  && apt-get update && apt-get install -y --no-install-recommends \
       intel-media-va-driver-non-free \
       libva-drm2 libva2 vainfo intel-gpu-tools \
@@ -101,8 +106,8 @@ RUN pip install --upgrade pip setuptools wheel && pip install \
 RUN if [ "$WITH_WHISPER" = "true" ]; then pip install faster-whisper; fi
 
 # --------------------------------------------------------------- browsers -----
-# Só corre se PLAYWRIGHT_BROWSERS não estiver vazio. Por omissão usa-se o
-# browserless da rede `n8n` e não há browser local para preparar.
+# Só corre se PLAYWRIGHT_BROWSERS não estiver vazio. Vazio significa usar um
+# browserless externo, e nesse caso não há browser local para preparar.
 RUN if [ -n "$PLAYWRIGHT_BROWSERS" ]; then npx -y playwright@latest install-deps ${PLAYWRIGHT_BROWSERS}; fi
 
 # ------------------------------------------------------------------- node -----
