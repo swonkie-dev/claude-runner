@@ -174,6 +174,16 @@ Se preferires polling, troca o Wait por um loop com `GET /jobs/:id` e um Wait de
 > Para diagnosticar: `GET /jobs/:id` devolve `callback_status` e
 > `callback_error`, que dizem exatamente o que aconteceu ao POST de volta.
 
+> ⚠️ **Um `callback_status: 404` com o URL correto quer dizer outra coisa: a
+> execução não está gravada.** O nó Wait só consegue retomar se a execução
+> existir na base de dados, porque vai buscá-la quando o webhook chega. Execuções
+> **manuais não são persistidas por omissão**, portanto ao testar com um trigger
+> manual o callback leva sempre 404 e o workflow fica preso, mesmo estando tudo
+> o resto bem.
+>
+> Liga `saveManualExecutions: true` nas definições do workflow. Em produção, com
+> um trigger a sério (cron, webhook), o problema não existe.
+
 **Conversas com continuidade:** guarda o `session_id` que vem no callback e
 envia-o no job seguinte. Combina com `workspace` fixo para os ficheiros também
 persistirem.
