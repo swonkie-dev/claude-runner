@@ -139,22 +139,39 @@ lista dos disponíveis, em vez de dar um job silenciosamente sem ferramentas.
 { "prompt": "…" }                       // todos os configurados
 ```
 
-**`disallowed_tools`: blocklist de ferramentas.** Funciona mesmo em
-`bypassPermissions` (verificado: com `--disallowedTools Bash`, o Bash desaparece
-da lista de ferramentas da sessão). Aceita nomes de built-ins (`Bash`, `Write`) e
-de MCP (`mcp__servidor__ferramenta`, ou `mcp__servidor` para o servidor todo).
+**`tools`: allowlist dos built-ins.** `"tools": ["Read","Grep"]` deixa a sessão
+exatamente com essas. Verificado: o Bash desaparece e o modelo diz que não o tem.
 
-> ⚠️ **`allowed_tools` NÃO restringe nada aqui.** É uma lista de *permissões*, e
-> em `bypassPermissions` está tudo aprovado à partida: verificado, com
-> `--allowedTools Read,Grep` todas as outras ferramentas continuam disponíveis.
-> Não o uses como barreira de segurança. Para limitar, usa `mcp` e
-> `disallowed_tools`.
+**`disallowed_tools`: blocklist.** Corta built-ins e ferramentas MCP
+(`mcp__servidor__ferramenta`). Verificado com `Bash`.
+
+> ⚠️ **`allowed_tools` não restringe nada em modo headless.** Verificado com e
+> sem `bypassPermissions`, e com as definições do utilizador desligadas: o modelo
+> usou o Bash na mesma, sem uma única negação registada. É uma lista de
+> *permissões*, não de capacidades. **Não o uses como barreira de segurança.**
+
+Quadro do que funciona, tudo verificado empiricamente:
+
+| Mecanismo | Efeito | Aplica-se a |
+|---|---|---|
+| `mcp: [...]` | o servidor nem é ligado | servidores MCP |
+| `tools: [...]` | allowlist | built-ins |
+| `disallowed_tools: [...]` | blocklist | built-ins e ferramentas MCP |
+| `allowed_tools: [...]` | **nenhum** | — |
+
+### Quando o MCP expõe uma só ferramenta genérica
+
+Filtrar ferramentas não serve de nada se o servidor expuser um único `exec` ou
+`raw_api_request` que aceita qualquer operação. Aí a única barreira real é o
+**âmbito da credencial**: uma chave de API só de leitura torna a escrita
+impossível, mesmo que o agente tente.
 
 Ordem de preferência, da barreira mais forte para a mais fraca:
 
-1. **`mcp`** — o servidor não é ligado. É uma fronteira real.
-2. **`disallowed_tools`** — a ferramenta não é oferecida ao modelo.
-3. **Instruções no prompt** — uma sugestão forte, não um cadeado.
+1. **Âmbito da credencial** — o servidor não consegue fazer a operação.
+2. **`mcp`** — o servidor não é ligado.
+3. **`tools` / `disallowed_tools`** — a ferramenta não é oferecida ao modelo.
+4. **Instruções no prompt** — uma sugestão forte, não um cadeado.
 
 ## Limite de utilização e reagendamento
 
