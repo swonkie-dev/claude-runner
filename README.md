@@ -347,6 +347,10 @@ yt-dlp, pydub, mutagen, markitdown, pytesseract, faster-whisper.
 
 **Node:** o próprio Claude Code, playwright, tsx, typescript.
 
+**Git:** git, git-lfs e o **GitHub CLI (`gh`)**, que se autentica sozinho a partir
+do `GH_TOKEN`. Abrir um PR passa a ser `gh pr create` em vez de montar o pedido à
+API com curl.
+
 **Browser:** Chromium via Playwright. Ver a secção Browser abaixo.
 
 Tudo o resto o Claude instala em runtime: `pip install` e `npm i -g` funcionam

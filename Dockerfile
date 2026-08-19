@@ -66,6 +66,18 @@ RUN sed -i 's/^Components: main$/Components: main contrib non-free non-free-firm
 # Sem isto o libva pode escolher o driver legado i965, que não serve para Gen12.
 ENV LIBVA_DRIVER_NAME=iHD
 
+# GitHub CLI. O agente usa-o para abrir Pull Requests; sem ele tem de montar o
+# pedido à API com curl, que é o passo que falha mais vezes. Autentica-se sozinho
+# a partir do GH_TOKEN que já está no ambiente, não precisa de `gh auth login`.
+# A fonte traz `signed-by`, por isso não colide com a fonte deb822 da imagem base.
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+ && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+ && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list \
+ && apt-get update && apt-get install -y --no-install-recommends gh \
+ && rm -rf /var/lib/apt/lists/*
+
 # O Debian bloqueia PDF e PostScript no ImageMagick por omissão (CVE-2016-3714).
 # Dentro deste container o sandbox é o próprio container, e sem isto metade das
 # conversões de PDF falha com "not authorized".
