@@ -65,6 +65,7 @@ Tudo autenticado com `Authorization: Bearer $RUNNER_TOKEN`, exceto `/healthz`.
 | `GET` | `/jobs/:id` | Estado e resultado de um job. |
 | `GET` | `/jobs` | Lista (`?status=running`, `?limit=50`). |
 | `GET` | `/jobs/:id/log` | Log completo da sessão em JSONL, um evento por linha. |
+| `GET` | `/workspaces/:nome/files/*` | Um ficheiro produzido dentro de um workspace com nome. |
 | `POST` | `/jobs/:id/cancel` | Cancela na fila ou mata o processo. |
 | `GET` | `/healthz` | Sem auth. Estado da fila. |
 
@@ -95,7 +96,8 @@ Tudo autenticado com `Authorization: Bearer $RUNNER_TOKEN`, exceto `/healthz`.
   "extra_args": [],                  // flags cruas do CLI, escape hatch
 
   "callback_url": "https://…/webhook/…",   // dispara no fim
-  "notify_url": "https://…/webhook/…",     // avisos intermédios
+  "notify_url": "https://…/webhook/…",     // avisos intermédios e progresso
+  "progress_interval_ms": 120000,          // batimento de progresso, 0 desliga
   "callback_headers": { "X-Token": "…" },
   "reschedule_on_rate_limit": true,
   "max_reschedules": 3,
@@ -120,6 +122,69 @@ O callback recebe:
   "meta": { "task_id": "DEV-1234" }
 }
 ```
+
+## Progresso durante a execução
+
+Um job destes leva minutos ou dezenas de minutos. Para quem está do outro lado,
+silêncio nesse intervalo é indistinguível de avaria, e a pergunta "isto ainda
+está a correr?" chega sempre antes do resultado.
+
+Pedir ao agente que vá dizendo em que ponto está funciona e vale a pena, mas não
+chega: depende de ele se lembrar, e um agente concentrado a renderizar 116 peças
+não se lembra. Por isso **o progresso é do runner, não do prompt**.
+
+Enquanto o processo estiver vivo, o `notify_url` recebe de `PROGRESS_INTERVAL_MS`
+em `PROGRESS_INTERVAL_MS` (dois minutos por omissão) um evento assim:
+
+```jsonc
+{
+  "job_id": "…", "event": "progress", "status": "running",
+  "elapsed_ms": 384000,
+  "num_events": 47, "num_tools": 31,
+  "last_tool": "Bash",
+  "last_text": "Vou renderizar os três formatos do cartão de orador…",
+  "idle_ms": 4200,          // desde o último sinal de vida do agente
+  "meta": { … }             // o teu meta, tal e qual
+}
+```
+
+O `idle_ms` é o campo que distingue trabalho a andar de processo encravado. A
+subir sem parar com o job vivo é o retrato de um comando à espera de alguma
+coisa que não vai chegar.
+
+> ⚠️ **Isto vai para o `notify_url`, nunca para o `callback_url`.** O callback é
+> terminal: dispará-lo a meio faz o nó Wait do orquestrador retomar o workflow
+> com o trabalho por acabar. São dois webhooks diferentes de propósito.
+
+As duas coisas somam-se bem. A narração do agente diz o **porquê**, com contexto
+do domínio; o batimento garante o **ainda cá está**, mesmo que o agente não abra
+a boca durante vinte minutos.
+
+## Ficheiros produzidos por um job
+
+O callback só leva texto. Um ficheiro que o agente produza fica preso no
+container, e é aí que muita automação encalha: fazer o modelo devolver o
+ficheiro em base64 seria pagá-lo inteiro em tokens de saída, com um teto de
+tamanho ridículo e o risco de vir corrompido.
+
+Em vez disso o agente grava onde tem de gravar, reporta o **caminho relativo** no
+resultado, e o orquestrador vai buscar os bytes:
+
+```bash
+curl -sS -H "Authorization: Bearer $RUNNER_TOKEN" \
+  http://claude-runner:8080/workspaces/smh/files/creatives/out/story-1080x1920/speakers/ana.png \
+  -o ana.png
+```
+
+Assim os bytes vão do container para o orquestrador sem passarem pelo modelo, e
+é o orquestrador que decide para onde os manda a seguir: um chat do Teams, um
+bucket, um email.
+
+**Só workspaces com nome.** O workspace descartável de um job vive noutro sítio e
+não é servido: se alguma coisa tem de sair de um job, esse job declara um
+`workspace`, e isso fica explícito em quem o dispara. Um pedido que tente sair da
+pasta com `..` leva `403`, e o nome do workspace passa pela mesma normalização
+que o resto.
 
 ## Privilégio mínimo por job
 

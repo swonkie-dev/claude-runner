@@ -31,6 +31,11 @@ const DEFAULT_TIMEOUT_MS = Number(process.env.DEFAULT_TIMEOUT_MS || 60 * 60 * 10
 const MCP_CONFIG = process.env.MCP_CONFIG || '/home/node/mcp.json'
 const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude'
 const KILL_GRACE_MS = 10_000
+// De quanto em quanto tempo o notify_url recebe sinal de vida de um job a
+// correr. Dois minutos é curto que chegue para ninguém pensar que aquilo
+// morreu, e longo que chegue para não encher a conversa de quem está a ver.
+// 0 desliga. Por job, `progress_interval_ms`.
+const PROGRESS_INTERVAL_MS = Number(process.env.PROGRESS_INTERVAL_MS ?? 120_000)
 const STDERR_CAP = 64 * 1024
 // Com autenticação por subscrição, bater na janela de 5 horas é rotina e não
 // erro. Em vez de falhar, o job espera pelo reset e recomeça de onde ficou.
@@ -118,7 +123,7 @@ async function restore() {
 }
 
 /** Aviso intermédio, não terminal. Não substitui o callback final. */
-async function notify(job, event) {
+async function notify(job, event, extra = {}) {
   if (!job.notify_url) return
   await fetch(job.notify_url, {
     method: 'POST',
@@ -126,7 +131,7 @@ async function notify(job, event) {
     body: JSON.stringify({
       job_id: job.id, event, status: job.status, retry_at: job.retry_at,
       attempt: job.attempts, max_reschedules: job.max_reschedules,
-      rate_limit: job.rate_limit, meta: job.meta,
+      rate_limit: job.rate_limit, meta: job.meta, ...extra,
     }),
     signal: AbortSignal.timeout(15_000),
   }).catch(err => log(`notify falhou para ${job.id}: ${err.message}`))
@@ -333,7 +338,21 @@ async function runJob(job) {
       }
       persist(job).catch(() => {})
     }
-    if (event.type === 'assistant') job.num_events = (job.num_events || 0) + 1
+    // Sinal de vida, para o batimento de progresso ter o que dizer. Sem isto o
+    // aviso intermédio só conseguiria dizer "ainda a correr", que não distingue
+    // trabalho a andar de um processo encravado.
+    if (event.type === 'assistant') {
+      job.num_events = (job.num_events || 0) + 1
+      job.last_event_at = Date.now()
+      for (const bloco of (event.message?.content || [])) {
+        if (bloco?.type === 'text' && bloco.text?.trim()) {
+          job.last_text = bloco.text.trim().slice(0, 400)
+        } else if (bloco?.type === 'tool_use' && bloco.name) {
+          job.last_tool = bloco.name
+          job.num_tools = (job.num_tools || 0) + 1
+        }
+      }
+    }
     // Com autenticação por subscrição, bater no limite de 5h é o modo de falha
     // mais comum e não vem no evento de result. Regista-o para o erro fazer
     // sentido a quem for ver.
@@ -342,6 +361,38 @@ async function runJob(job) {
     }
     if (event.type === 'result') resultEvent = event
   })
+
+  // BATIMENTO DE PROGRESSO.
+  //
+  // Um job destes leva minutos ou dezenas de minutos, e silêncio nesse intervalo
+  // é indistinguível de avaria para quem está do outro lado. Pedir ao agente que
+  // vá dizendo em que ponto está funciona, mas depende de ele se lembrar, e um
+  // agente concentrado a renderizar 116 peças não se lembra.
+  //
+  // Por isso o progresso é do runner, não do prompt: enquanto o processo estiver
+  // vivo, o notify_url recebe de tempos a tempos o que está a acontecer. As duas
+  // coisas somam-se, a narração do agente diz o "porquê" e isto garante o "ainda
+  // cá está".
+  //
+  // Vai para o notify_url e NUNCA para o callback_url: o callback é terminal, e
+  // dispará-lo a meio retomaria o nó Wait do orquestrador com o trabalho por
+  // acabar.
+  const progressoMs = job.progress_interval_ms ?? PROGRESS_INTERVAL_MS
+  const batimento = progressoMs > 0 && job.notify_url
+    ? setInterval(() => {
+        notify(job, 'progress', {
+          elapsed_ms: Date.now() - Date.parse(job.started_at),
+          num_events: job.num_events || 0,
+          num_tools: job.num_tools || 0,
+          last_tool: job.last_tool || null,
+          last_text: job.last_text || null,
+          // Quanto tempo desde o último sinal de vida. A subir sem parar com o
+          // processo vivo é o retrato de um comando encravado à espera de algo.
+          idle_ms: job.last_event_at ? Date.now() - job.last_event_at : null,
+        }).catch(() => {})
+      }, progressoMs)
+    : null
+  batimento?.unref?.()
 
   const timer = setTimeout(() => {
     job.timed_out = true
@@ -356,6 +407,7 @@ async function runJob(job) {
   })
 
   clearTimeout(timer)
+  if (batimento) clearInterval(batimento)
   children.delete(job.id)
   await new Promise(r => logStream.end(r))
   rl.close()
@@ -544,6 +596,9 @@ app.post('/jobs', async (req, res) => {
     // Avisos intermédios (por agora só "rate_limited"). Separado do callback,
     // que só dispara quando o job termina de vez.
     notify_url: b.notify_url || null,
+    progress_interval_ms: b.progress_interval_ms === undefined
+      ? undefined
+      : Number(b.progress_interval_ms),
     // Aborta se algum MCP declarado não ligar, em vez de correr sem ele.
     fail_on_mcp_error: b.fail_on_mcp_error ?? FAIL_ON_MCP_ERROR,
     reschedule_on_rate_limit: b.reschedule_on_rate_limit ?? RESCHEDULE_ON_RATE_LIMIT,
@@ -588,6 +643,47 @@ app.get('/jobs/:id/log', async (req, res) => {
     res.type('application/x-ndjson').send(content)
   } catch {
     res.status(404).json({ error: 'sem log' })
+  }
+})
+
+// Ficheiros produzidos dentro de um workspace, para o orquestrador os ir buscar.
+//
+// Sem isto, um ficheiro que o agente produz fica preso no container: o callback
+// só leva texto. Fazer o modelo devolver base64 seria pagar o ficheiro inteiro
+// em tokens de saída, com um teto de tamanho ridículo e o risco de vir
+// corrompido. Assim os bytes vão do container para o orquestrador sem passarem
+// pelo modelo, e é o orquestrador que decide para onde os manda a seguir.
+//
+// Só workspaces com nome. O workspace descartável de um job vive em JOBS_DIR e
+// não é servido: se alguma coisa tem de sair de um job, esse job declara um
+// `workspace`, e isso fica explícito em quem o dispara.
+app.get('/workspaces/:name/files/*', async (req, res) => {
+  let raiz
+  try {
+    raiz = path.join(WORKSPACES_DIR, safeSlug(req.params.name))
+  } catch {
+    return res.status(400).json({ error: 'workspace inválido' })
+  }
+
+  // `path.resolve` resolve os `..` antes da comparação, que é o que impede um
+  // pedido a `../../etc/passwd` de sair do workspace. O separador entra na
+  // comparação de propósito: sem ele, `/work/workspaces/smh-outro` passava por
+  // ser prefixo textual de `/work/workspaces/smh`.
+  const alvo = path.resolve(raiz, decodeURIComponent(req.params[0] || ''))
+  if (alvo !== raiz && !alvo.startsWith(raiz + path.sep)) {
+    return res.status(403).json({ error: 'caminho fora do workspace' })
+  }
+
+  try {
+    const st = await fs.stat(alvo)
+    if (!st.isFile()) return res.status(404).json({ error: 'não é um ficheiro' })
+    const nome = path.basename(alvo)
+    res.type(path.extname(alvo) || 'application/octet-stream')
+    res.setHeader('Content-Length', st.size)
+    res.setHeader('Content-Disposition', `attachment; filename="${nome.replace(/["\r\n]/g, '')}"`)
+    require_fs.createReadStream(alvo).pipe(res)
+  } catch {
+    res.status(404).json({ error: 'ficheiro não encontrado' })
   }
 })
 
