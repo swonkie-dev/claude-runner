@@ -24,6 +24,30 @@ else
   node /home/node/build-mcp.mjs "$MCP_CONFIG"
 fi
 
+# Um browser em falta não dá erro nenhum: os jobs correm e só o gerador de
+# imagens é que falha, com um ENOENT que não explica nada e a dezenas de minutos
+# de distância. Vale mais dizê-lo aqui, uma vez, bem alto.
+#
+# A causa habitual é um volume montado por cima do PLAYWRIGHT_BROWSERS_PATH. Se
+# isto disparar com o caminho dentro de /home/node/.cache, é esse o problema.
+PW="${PLAYWRIGHT_BROWSERS_PATH:-/home/node/browsers}"
+if [ -z "$(ls -d "$PW"/chromium-*/chrome-linux*/chrome 2>/dev/null | head -1)" ]; then
+  echo "entrypoint: AVISO, nao ha Chromium em $PW." >&2
+  echo "entrypoint: jobs que rendam HTML para imagem vao falhar com ENOENT." >&2
+  case "$PW" in
+    /home/node/.cache/*)
+      echo "entrypoint: esse caminho esta dentro do volume claude-cache, que tapa o que" >&2
+      echo "entrypoint: a imagem instalou. Atualiza a imagem ou aponta o" >&2
+      echo "entrypoint: PLAYWRIGHT_BROWSERS_PATH para fora do volume." >&2
+      ;;
+    *)
+      echo "entrypoint: a imagem foi construida com PLAYWRIGHT_BROWSERS vazio?" >&2
+      ;;
+  esac
+else
+  echo "entrypoint: Chromium encontrado em $PW"
+fi
+
 git config --global init.defaultBranch main
 # Os repositórios são clonados para volumes; sem isto o git recusa-se a operar
 # neles quando o owner não bate certo.

@@ -100,9 +100,16 @@ RUN if [ "$WITH_LIBREOFFICE" = "true" ]; then \
 RUN python3 -m venv /opt/venv
 ENV PATH=/opt/venv/bin:$PATH
 
+# `fonttools` e `brotli` andam juntos de propósito. Pipelines de vídeo convertem
+# os woff2 do repositório para TTF em runtime, porque o libass não lê woff2 e a
+# fonte da marca não está instalada em lado nenhum. O fontTools ainda entrava de
+# boleia como dependência do matplotlib, mas sem o brotli o `TTFont(x.woff2)`
+# rebenta a descomprimir, e o sintoma aparece longe da causa: o vídeo sai sem
+# legendas. Explícitos, para não dependerem do que o matplotlib decidir amanhã.
 RUN pip install --upgrade pip setuptools wheel && pip install \
       numpy pandas polars pyarrow \
       pillow opencv-python-headless scikit-image imageio imageio-ffmpeg \
+      fonttools brotli \
       pypdf pdfplumber pymupdf pdf2image \
       openpyxl xlsxwriter python-docx python-pptx odfpy xlrd \
       beautifulsoup4 lxml html5lib httpx requests \
@@ -125,11 +132,25 @@ RUN if [ -n "$PLAYWRIGHT_BROWSERS" ]; then npx -y playwright@latest install-deps
 # ------------------------------------------------------------------- node -----
 # npm global no home do utilizador, para o Claude poder `npm i -g` sem sudo
 # e para o auto-update do próprio Claude Code funcionar.
+# O browser NÃO pode viver em /home/node/.cache. O compose monta lá um volume
+# (`claude-cache`), e um volume só é povoado a partir da imagem quando está
+# vazio: assim que existe de uma versão anterior, nunca mais é atualizado. O
+# Chromium que a imagem instala fica tapado pelo volume e desaparece, sem erro
+# nenhum no arranque.
+#
+# Foi exatamente o que aconteceu: uma imagem construída com chromium a servir
+# jobs sem browser nenhum, e o sintoma a aparecer longe da causa, num gerador de
+# imagens a devolver `spawn google-chrome ENOENT`.
+#
+# Em /home/node/browsers, que não é ponto de montagem de nada, o browser é o da
+# imagem e uma atualização da imagem chega para o corrigir. O volume de cache
+# fica só com o que deve mesmo ser cache: pip e npm.
 ENV NPM_CONFIG_PREFIX=/home/node/.npm-global \
     PATH=/home/node/.npm-global/bin:/opt/venv/bin:$PATH \
-    PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
+    PLAYWRIGHT_BROWSERS_PATH=/home/node/browsers
 
-RUN mkdir -p /home/node/.npm-global /home/node/server /home/node/.cache /work \
+RUN mkdir -p /home/node/.npm-global /home/node/server /home/node/.cache \
+             /home/node/browsers /work \
  && chown -R node:node /home/node /opt/venv /work
 
 # IMPORTANTE: o Claude Code recusa-se a arrancar com bypassPermissions como root.
@@ -148,6 +169,40 @@ RUN npm install -g @playwright/mcp n8n-mcp
 # Só se pediram browsers locais. A biblioteca `playwright` instalada acima entra
 # sempre, porque é ela que faz o connectOverCDP ao browserless.
 RUN if [ -n "$PLAYWRIGHT_BROWSERS" ]; then playwright install ${PLAYWRIGHT_BROWSERS}; fi
+
+# `google-chrome` no PATH, a apontar para o Chromium do Playwright.
+#
+# Muito gerador de imagem invoca o BINÁRIO do Chrome em vez da API do Playwright,
+# tipicamente `execFile(process.env.CHROME_BIN || 'google-chrome', ['--headless',
+# '--screenshot=...'])`. Sem isto, uma imagem que tem Chromium instalado responde
+# ENOENT a quem lhe pede um browser, e o erro não diz nada sobre o que falta.
+#
+# O caminho real leva o número de revisão lá dentro
+# (`chromium-1234/chrome-linux/chrome`) e muda a cada atualização, por isso o shim
+# resolve-o em RUNTIME. Gravar o caminho na imagem partiria no dia em que alguém
+# corresse `playwright install` dentro da sessão.
+#
+# Quando não há browser local (PLAYWRIGHT_BROWSERS vazio, modo browserless), o
+# shim falha alto e diz porquê, que é melhor do que não existir.
+RUN printf '%s\n' \
+      '#!/bin/sh' \
+      'PW="${PLAYWRIGHT_BROWSERS_PATH:-/home/node/browsers}"' \
+      'for p in "$PW"/chromium-*/chrome-linux*/chrome; do' \
+      '  [ -x "$p" ] && exec "$p" "$@"' \
+      'done' \
+      'echo "google-chrome: nao ha Chromium do Playwright em $PW." >&2' \
+      'echo "google-chrome: a imagem foi construida com PLAYWRIGHT_BROWSERS vazio (modo browserless)?" >&2' \
+      'exit 127' \
+    > /home/node/.npm-global/bin/google-chrome \
+ && chmod +x /home/node/.npm-global/bin/google-chrome \
+ && for n in chrome chromium chromium-browser; do \
+      ln -sf /home/node/.npm-global/bin/google-chrome "/home/node/.npm-global/bin/$n"; \
+    done
+
+# Os dois nomes por que os geradores costumam perguntar. Apontam para o shim, não
+# para o binário, para continuarem certos depois de uma atualização do Chromium.
+ENV CHROME_BIN=/home/node/.npm-global/bin/google-chrome \
+    PUPPETEER_EXECUTABLE_PATH=/home/node/.npm-global/bin/google-chrome
 
 # --------------------------------------------------------------- wrapper ------
 COPY --chown=node:node server/package.json /home/node/server/

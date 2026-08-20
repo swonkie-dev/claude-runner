@@ -343,7 +343,14 @@ ghostscript, qpdf, tesseract (por/eng/spa), exiftool, LibreOffice headless,
 **Python** (venv em `/opt/venv`, já no PATH): pandas, polars, numpy, pyarrow,
 pillow, opencv-headless, scikit-image, pypdf, pdfplumber, pymupdf, openpyxl,
 xlsxwriter, python-docx, python-pptx, beautifulsoup4, lxml, httpx, matplotlib,
-yt-dlp, pydub, mutagen, markitdown, pytesseract, faster-whisper.
+yt-dlp, pydub, mutagen, markitdown, pytesseract, faster-whisper, fonttools e
+brotli.
+
+Os dois últimos existem para os pipelines de vídeo: o libass não lê `woff2` e a
+fonte de marca não está instalada em máquina nenhuma, por isso a prática é
+converter os `woff2` do repositório para TTF em runtime. Sem o **brotli** essa
+conversão rebenta a descomprimir, e o sintoma aparece longe da causa, no vídeo a
+sair sem legendas.
 
 **Node:** o próprio Claude Code, playwright, tsx, typescript.
 
@@ -351,7 +358,8 @@ yt-dlp, pydub, mutagen, markitdown, pytesseract, faster-whisper.
 do `GH_TOKEN`. Abrir um PR passa a ser `gh pr create` em vez de montar o pedido à
 API com curl.
 
-**Browser:** Chromium via Playwright. Ver a secção Browser abaixo.
+**Browser:** Chromium via Playwright, alcançável tanto pela API como pelo
+binário `google-chrome`. Ver a secção Browser abaixo.
 
 Tudo o resto o Claude instala em runtime: `pip install` e `npm i -g` funcionam
 sem sudo, e os caches ficam no volume `claude-cache`, portanto a segunda vez é
@@ -359,9 +367,54 @@ rápida. Não vale a pena inchar a imagem com bibliotecas que talvez nunca use.
 
 ## Browser
 
-A imagem traz o seu próprio Chromium, em `PLAYWRIGHT_BROWSERS_PATH`, partilhado
-por qualquer projeto que o Claude crie dentro do container. Para firefox e
-webkit também: `PLAYWRIGHT_BROWSERS="chromium firefox webkit"` e rebuild.
+A imagem traz o seu próprio Chromium, em `PLAYWRIGHT_BROWSERS_PATH`
+(`/home/node/browsers`), partilhado por qualquer projeto que o Claude crie dentro
+do container. Para firefox e webkit também:
+`PLAYWRIGHT_BROWSERS="chromium firefox webkit"` e rebuild.
+
+> ⚠️ **O browser não pode viver dentro de um volume montado.** O
+> `PLAYWRIGHT_BROWSERS_PATH` esteve em `/home/node/.cache/ms-playwright`, que é
+> precisamente onde o compose monta o volume `claude-cache`. Um volume só é
+> povoado a partir da imagem quando está **vazio**: assim que existe de uma
+> versão anterior, nunca mais é atualizado. O Chromium que a imagem instalou fica
+> tapado e **desaparece sem erro nenhum**.
+>
+> Foi medido, não deduzido: uma imagem construída com chromium a servir jobs sem
+> browser nenhum, e o sintoma a aparecer longe da causa, num gerador de imagens a
+> devolver `spawn google-chrome ENOENT`.
+>
+> Por isso o caminho passou para `/home/node/browsers`, que não é ponto de
+> montagem de nada. Uma atualização da imagem chega para corrigir, sem mexer em
+> volumes. O `claude-cache` fica com o que deve mesmo ser cache: pip e npm.
+>
+> O entrypoint verifica isto no arranque e avisa alto se não houver browser, em
+> vez de deixar a falha aparecer só quando alguém pedir uma imagem:
+>
+> ```
+> entrypoint: AVISO, nao ha Chromium em /home/node/.cache/ms-playwright.
+> entrypoint: esse caminho esta dentro do volume claude-cache, que tapa o que
+> entrypoint: a imagem instalou.
+> ```
+
+**`google-chrome` está no PATH.** Muito gerador de imagem não usa a API do
+Playwright: invoca o binário do Chrome à mão, tipicamente
+
+```js
+execFile(process.env.CHROME_BIN || 'google-chrome',
+         ['--headless', '--no-sandbox', `--screenshot=${dst}`, html]);
+```
+
+Sem um binário com esse nome, uma imagem que **tem** Chromium instalado responde
+`ENOENT` a quem lhe pede um browser, e o erro não diz nada sobre o que falta. Por
+isso a imagem instala um shim em `google-chrome` (mais os aliases `chrome`,
+`chromium` e `chromium-browser`) e define `CHROME_BIN` e
+`PUPPETEER_EXECUTABLE_PATH` a apontar para ele.
+
+O shim resolve o caminho real **em runtime**, porque esse caminho leva o número
+de revisão lá dentro (`chromium-1187/chrome-linux/chrome`) e muda a cada
+atualização. Gravá-lo na imagem partiria no dia em que alguém corresse
+`playwright install` dentro da sessão. Sem browser local (modo browserless), o
+shim sai com 127 e diz porquê, em vez de simplesmente não existir.
 
 **Alternativa: ligar a um browserless externo.** Se já tens um browserless na
 rede, podes dispensar o browser local (`PLAYWRIGHT_BROWSERS=` vazio) e apontar o
