@@ -22,7 +22,19 @@ const bearer = v => (/^bearer\s/i.test(v) ? v : `Bearer ${v}`)
 const servers = {}
 
 // Não precisa de credenciais, está sempre disponível.
-servers.playwright = { command: 'playwright-mcp', args: ['--headless', '--isolated'] }
+//
+// `--browser chromium` NÃO é opcional. Sem ele o playwright-mcp assume o canal
+// `chrome`, o Google Chrome de marca, e vai procurá-lo a /opt/google/chrome/chrome,
+// que não existe nesta imagem. A ferramenta aparece na sessão, o agente usa-a, e
+// só então rebenta com "Chromium distribution 'chrome' is not found".
+//
+// Medido a 2026-08-21: a imagem tinha Chromium instalado e o browser do agente
+// falhava na mesma. O erro aponta para um caminho que ninguém configurou, o que
+// manda quem investiga para o sítio errado.
+servers.playwright = {
+  command: 'playwright-mcp',
+  args: ['--headless', '--isolated', '--browser', 'chromium'],
+}
 
 if (has('SWONKIE_MCP_URL')) {
   servers.swonkie = { type: 'http', url: val('SWONKIE_MCP_URL') }
